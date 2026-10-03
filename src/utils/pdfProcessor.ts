@@ -407,6 +407,158 @@ async function scanPrintedFihrisPages(pdfDoc: any): Promise<KitabChapter[]> {
   return [];
 }
 
+/**
+ * Detects the cover / front-matter offset (number of pages before main body text) for any PDF document.
+ */
+export async function detectPdfCoverOffset(pdfDoc: any): Promise<number> {
+  if (!pdfDoc) return 0;
+  try {
+    const pagesToScan = Math.min(pdfDoc.numPages, 30);
+    for (let p = 1; p <= pagesToScan; p++) {
+      const page = await pdfDoc.getPage(p);
+      const textContent = await page.getTextContent();
+      const rawText = textContent.items.map((it: any) => it.str || '').join(' ');
+      const cleanText = stripArabicTashkeel(rawText);
+
+      // Indicators of main body start (Page >= 2)
+      const hasArabicKitabOrBab =
+        /\b(كتاب|الكتاب|باب|الباب|فصل|الفصل)\s+(الطهارة|الصلاة|الزكاة|الصوم|الحج|البيوع|النكاح|الجنايات|الأذان|المقدمة|الطهاره|الصلاه|المعاملات|الفرائض|الحدود|الجهاد|الشهادات)\b/i.test(cleanText);
+
+      const hasIntroPhrase =
+        cleanText.includes('مقدمة المصنف') ||
+        cleanText.includes('خطبة الكتاب') ||
+        cleanText.includes('قال الشيخ') ||
+        cleanText.includes('الحمد لله الذي') ||
+        cleanText.includes('حمدا لمن') ||
+        cleanText.includes('أحمده على') ||
+        cleanText.includes('نحمده ونستعينه');
+
+      const hasPrintedPageOne =
+        p >= 3 &&
+        (/\bص\s*1\b|\bصفحة\s*1\b|\bhal\s*1\b|\bhalaman\s*1\b/i.test(cleanText) ||
+         /^\s*1\s*$/.test(cleanText) ||
+         /\n\s*1\s*\n/.test(cleanText));
+
+      if (p >= 2 && (hasArabicKitabOrBab || (p >= 3 && hasIntroPhrase) || hasPrintedPageOne)) {
+        return Math.max(0, p - 1);
+      }
+    }
+  } catch (err) {
+    console.warn('Error detecting PDF cover offset:', err);
+  }
+  return 0;
+}
+
+/**
+ * Automatically scans PDF text pages to align chapter startPage numbers
+ * with real Application PDF pages (detects cover page offset & exact headings automatically).
+ */
+export async function autoAlignChaptersWithPdfPages(
+  pdfDoc: any,
+  chapters: KitabChapter[],
+  totalPages: number
+): Promise<KitabChapter[]> {
+  if (!pdfDoc || !chapters || chapters.length === 0) return chapters;
+
+  try {
+    const numPages = Math.min(pdfDoc.numPages, totalPages);
+    const pageTexts: { page: number; text: string }[] = [];
+
+    // Pre-extract clean text for all PDF pages
+    for (let p = 1; p <= numPages; p++) {
+      try {
+        const page = await pdfDoc.getPage(p);
+        const txt = await page.getTextContent();
+        const str = txt.items.map((it: any) => it.str || '').join(' ');
+        pageTexts.push({ page: p, text: stripArabicTashkeel(str) });
+      } catch {
+        // ignore
+      }
+    }
+
+    const hitMap = new Map<number, number>();
+
+    for (let cIdx = 0; cIdx < chapters.length; cIdx++) {
+      const ch = chapters[cIdx];
+      const fullTitle = ch.title;
+      const cleanFullTitle = stripArabicTashkeel(fullTitle);
+
+      const isTarjamah =
+        cleanFullTitle.includes('ترجمة') ||
+        cleanFullTitle.includes('البنتني') ||
+        cleanFullTitle.includes('المليباري') ||
+        cleanFullTitle.includes('المصنف');
+
+      const words = cleanFullTitle
+        .split(/[\s:,\.\-\(\)]+/)
+        .filter((w) => w.length >= 2 && !/^(في|عن|على|من|إلى|مع|أن|إن|هو|هي|و|أو)$/.test(w));
+
+      if (words.length === 0) continue;
+
+      const phrase3 = words.slice(0, 3).join(' ');
+      const phrase2 = words.slice(0, 2).join(' ');
+      const phrase1 = words[0];
+
+      let foundPage = 0;
+      for (const pt of pageTexts) {
+        if (
+          isTarjamah &&
+          (pt.text.includes('ترجمة') || pt.text.includes('البنتني') || pt.text.includes('المليباري'))
+        ) {
+          foundPage = pt.page;
+          break;
+        }
+
+        if (
+          (phrase3.length >= 3 && pt.text.includes(phrase3)) ||
+          (phrase2.length >= 3 && pt.text.includes(phrase2)) ||
+          (phrase1.length >= 4 && pt.text.includes(phrase1) && pt.page > 1)
+        ) {
+          foundPage = pt.page;
+          break;
+        }
+      }
+
+      if (foundPage > 0) {
+        hitMap.set(cIdx, foundPage);
+      }
+    }
+
+    let lastFoundPage = 1;
+    const numCh = chapters.length;
+
+    return chapters.map((ch, idx) => {
+      let finalPage = ch.startPage;
+      if (hitMap.has(idx)) {
+        finalPage = hitMap.get(idx)!;
+        lastFoundPage = finalPage;
+      } else {
+        const nextHitIdx = Array.from(hitMap.keys()).find((k) => k > idx);
+        if (nextHitIdx !== undefined) {
+          const nextHitPage = hitMap.get(nextHitIdx)!;
+          const gap = nextHitIdx - idx + 1;
+          const step = Math.max(1, Math.floor((nextHitPage - lastFoundPage) / gap));
+          finalPage = Math.min(nextHitPage, Math.max(lastFoundPage, lastFoundPage + step));
+        } else {
+          const remainingPages = totalPages - lastFoundPage;
+          const remainingCh = numCh - idx;
+          const step = Math.max(1, Math.floor(remainingPages / Math.max(1, remainingCh)));
+          finalPage = Math.min(totalPages, Math.max(lastFoundPage, lastFoundPage + step));
+        }
+        lastFoundPage = finalPage;
+      }
+
+      return {
+        ...ch,
+        startPage: idx === 0 ? 1 : Math.min(totalPages, Math.max(1, finalPage)),
+      };
+    });
+  } catch (err) {
+    console.warn('Error in autoAlignChaptersWithPdfPages:', err);
+    return chapters;
+  }
+}
+
 export interface TuratsKitabTemplate {
   id: string;
   name: string;
@@ -414,6 +566,7 @@ export interface TuratsKitabTemplate {
   author: string;
   keywords: string[];
   chapters: string[];
+  chapterEntries?: { title: string; startPage: number }[];
 }
 
 export function normalizeArabicTitle(str: string): string {
@@ -776,6 +929,91 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     ],
   },
   {
+    id: 'nihayatuz-zain',
+    name: 'Nihayatuz Zain',
+    arabicName: 'نهاية الزين في إرشاد المبتدئين',
+    author: 'Al-Allamah Syaikh Muhammad Nawawi Al-Bantani',
+    keywords: [
+      'nihayah',
+      'nihayatuz',
+      'نهاية',
+      'الزين',
+      'نهاية الزين',
+      '0084',
+      'نووي البنتني',
+      'الجاوي',
+      'الماليباري',
+    ],
+    chapterEntries: [
+      { title: 'ترجمة المليباري صاحب المتن', startPage: 3 },
+      { title: 'ترجمة نووي الجاوي صاحب الشرح', startPage: 3 },
+      { title: 'خطبة الشارح', startPage: 5 },
+      { title: 'خطبة الكتاب', startPage: 7 },
+      { title: 'باب الصلاة', startPage: 11 },
+      { title: 'فصل في مسائل منثورة', startPage: 15 },
+      { title: 'فصل في كيفية الصلاة المتعلقة بواجب', startPage: 55 },
+      { title: 'فصل في سجود السهو', startPage: 80 },
+      { title: 'فصل في مفسدات الصلاة', startPage: 88 },
+      { title: 'فصل في سنن الصلاة المكتوبة قبل الدخول فيها', startPage: 93 },
+      { title: 'فصل في صلاة النفل', startPage: 97 },
+      { title: 'فصل في الجماعة في الصلاة', startPage: 114 },
+      { title: 'فصل في صلاة الجمعة', startPage: 132 },
+      { title: 'فصل في الجنائز', startPage: 143 },
+      { title: 'باب ما يحرم استعماله من اللباس والحلي وما لا يحرم', startPage: 161 },
+      { title: 'باب الزكاة', startPage: 164 },
+      { title: 'فصل في أداء الزكاة', startPage: 173 },
+      { title: 'باب الصوم', startPage: 180 },
+      { title: 'فصل في صوم التطوع', startPage: 191 },
+      { title: 'باب الاعتكاف', startPage: 193 },
+      { title: 'باب الحج والعمرة', startPage: 196 },
+      { title: 'فصل في محظورات النسك', startPage: 209 },
+      { title: 'فرع: في أحكام النذور', startPage: 216 },
+      { title: 'باب البيوع والمعاملات المالية', startPage: 218 },
+      { title: 'فصل في السلم والرهن والضمان والشركة والوكالة', startPage: 235 },
+      { title: 'فصل في الإقرار والعارية والغصب والشفعة والقراض والمساقاة والإجارة', startPage: 258 },
+      { title: 'باب الفرائض والوصايا والمواريث', startPage: 285 },
+      { title: 'باب النكاح وما يتعلق به من أحكام العقد والصداق', startPage: 298 },
+      { title: 'فصل في القسم والنشوز والخلع والطلاق والرجعة والعدة والنفقة', startPage: 320 },
+      { title: 'كتاب الجنايات والديات والقصاص', startPage: 350 },
+      { title: 'كتاب الحدود والتعزير والردة والجهاد', startPage: 368 },
+      { title: 'كتاب الأقضية والشهادات والدعاوى والعتق', startPage: 382 },
+    ],
+    chapters: [
+      'ترجمة المليباري صاحب المتن',
+      'ترجمة نووي الجاوي صاحب الشرح',
+      'خطبة الشارح',
+      'خطبة الكتاب',
+      'باب الصلاة',
+      'فصل في مسائل منثورة',
+      'فصل في كيفية الصلاة المتعلقة بواجب',
+      'فصل في سجود السهو',
+      'فصل في مفسدات الصلاة',
+      'فصل في سنن الصلاة المكتوبة قبل الدخول فيها',
+      'فصل في صلاة النفل',
+      'فصل في الجماعة في الصلاة',
+      'فصل في صلاة الجمعة',
+      'فصل في الجنائز',
+      'باب ما يحرم استعماله من اللباس والحلي وما لا يحرم',
+      'باب الزكاة',
+      'فصل في أداء الزكاة',
+      'باب الصوم',
+      'فصل في صوم التطوع',
+      'باب الاعتكاف',
+      'باب الحج والعمرة',
+      'فصل في محظورات النسك',
+      'فرع: في أحكام النذور',
+      'باب البيوع والمعاملات المالية',
+      'فصل في السلم والرهن والضمان والشركة والوكالة',
+      'فصل في الإقرار والعارية والغصب والشفعة والقراض والمساقاة والإجارة',
+      'باب الفرائض والوصايا والمواريث',
+      'باب النكاح وما يتعلق به من أحكام العقد والصداق',
+      'فصل في القسم والنشوز والخلع والطلاق والرجعة والعدة والنفقة',
+      'كتاب الجنايات والديات والقصاص',
+      'كتاب الحدود والتعزير والردة والجهاد',
+      'كتاب الأقضية والشهادات والدعاوى والعتق',
+    ],
+  },
+  {
     id: 'fathul-muin',
     name: 'Fathul Mu\'in',
     arabicName: 'فتح المعين بشرح قرة العين بمهمات الدين',
@@ -1063,7 +1301,7 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
       'أبي شجاع',
     ],
     chapters: [
-      'مقدمة الشارح والمصنف',
+      'ترجمة المصنف والشارح: الشيخ محمد نووي البنتني والشيخ زين الدين المليباري',
       'كتاب الطهارة: أقسام المياه وما يطهر وما لا يطهر',
       'فصل في آنية الذهب والفضة والسواك وسننه',
       'فصل في فروض الوضوء وسننه ونواقضه',
@@ -1462,7 +1700,7 @@ export async function detectOrGenerateKitabChapters(
     // 3. Try scanning printed Fihris pages in PDF
     try {
       const fihrisFromPdf = await scanPrintedFihrisPages(pdfDoc);
-      if (fihrisFromPdf && fihrisFromPdf.length >= minRequired) {
+      if (fihrisFromPdf && fihrisFromPdf.length >= 2) {
         return fihrisFromPdf;
       }
     } catch (e) {
@@ -1472,14 +1710,28 @@ export async function detectOrGenerateKitabChapters(
 
   // 4. If matched with our classical Turats library, return its full authentic chapters!
   if (matchedTemplate) {
+    if ((matchedTemplate as any).chapterEntries) {
+      return (matchedTemplate as any).chapterEntries.map((e: any, idx: number) => ({
+        id: `${matchedTemplate!.id}-${idx + 1}`,
+        number: String(idx + 1).padStart(2, '0'),
+        title: e.title,
+        startPage: e.startPage,
+      }));
+    }
+
     const numCh = matchedTemplate.chapters.length;
     const pagesStep = Math.max(1, Math.floor(totalPages / numCh));
-    return matchedTemplate.chapters.map((chName, idx) => ({
+    const rawTemplateChapters: KitabChapter[] = matchedTemplate.chapters.map((chName, idx) => ({
       id: `${matchedTemplate!.id}-${idx + 1}`,
       number: String(idx + 1).padStart(2, '0'),
       title: chName,
       startPage: idx === 0 ? 1 : Math.min(totalPages, Math.max(2, Math.round(idx * pagesStep))),
     }));
+
+    if (pdfDoc) {
+      return await autoAlignChaptersWithPdfPages(pdfDoc, rawTemplateChapters, totalPages);
+    }
+    return rawTemplateChapters;
   }
 
   // 5. If unlisted book and PDF is loaded, scan full-text headings across all pages

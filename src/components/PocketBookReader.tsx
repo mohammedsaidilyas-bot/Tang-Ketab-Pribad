@@ -20,6 +20,9 @@ import {
   RotateCw,
   Save,
   Sparkles,
+  Sliders,
+  MapPin,
+  ArrowUpDown,
   X,
 } from 'lucide-react';
 import {
@@ -37,6 +40,7 @@ import {
   loadPdfArrayBuffer,
   extractChaptersFromPdfDoc,
   detectOrGenerateKitabChapters,
+  detectPdfCoverOffset,
   createPdfLoadingTask,
   globalPdfDocCache,
   getOrLoadPdfDoc,
@@ -235,6 +239,20 @@ const PdfCanvasPage: React.FC<{
   );
 };
 
+function toRomanNumeral(num: number): string {
+  if (num <= 0) return '';
+  const val = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
+  const syb = ['m', 'cm', 'd', 'cd', 'c', 'xc', 'l', 'xl', 'x', 'ix', 'v', 'iv', 'i'];
+  let roman = '';
+  for (let i = 0; i < val.length; i++) {
+    while (num >= val[i]) {
+      roman += syb[i];
+      num -= val[i];
+    }
+  }
+  return roman;
+}
+
 export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   kitab,
   notes,
@@ -340,6 +358,8 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     };
   }, [kitab.id, kitab.title, kitab.totalPages, pdfDoc]);
 
+  const currentPage = Math.min(Math.max(1, kitab.lastReadPage), kitab.totalPages);
+
   const handleOpenTocEditModal = () => {
     setEditingChapters([...kitab.chapters]);
     setNewChapterTitle('');
@@ -408,7 +428,123 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     setShowTocEditModal(false);
   };
 
-  const currentPage = Math.min(Math.max(1, kitab.lastReadPage), kitab.totalPages);
+  const handleShiftAllPages = (delta: number) => {
+    if (!onUpdateChapters || !kitab.chapters) return;
+    const shifted = kitab.chapters.map((c) => ({
+      ...c,
+      startPage: Math.min(kitab.totalPages, Math.max(1, c.startPage + delta)),
+    }));
+    onUpdateChapters(kitab.id, shifted);
+    setTocUpdateSuccessToast(true);
+    setTimeout(() => setTocUpdateSuccessToast(false), 2200);
+  };
+
+  const handleSetChapterPage = (chapterId: string, targetPage: number) => {
+    if (!onUpdateChapters || !kitab.chapters) return;
+    const updated = kitab.chapters.map((c) =>
+      c.id === chapterId ? { ...c, startPage: Math.min(kitab.totalPages, Math.max(1, targetPage)) } : c
+    );
+    onUpdateChapters(kitab.id, updated);
+    setTocUpdateSuccessToast(true);
+    setTimeout(() => setTocUpdateSuccessToast(false), 2000);
+  };
+
+  const handleShiftEditingPages = (delta: number) => {
+    setEditingChapters((prev) =>
+      prev.map((c) => ({
+        ...c,
+        startPage: Math.min(kitab.totalPages, Math.max(1, c.startPage + delta)),
+      }))
+    );
+  };
+
+  const [pdfCoverOffset, setPdfCoverOffset] = useState<number>(() => {
+    if (kitab.coverOffset !== undefined) return kitab.coverOffset;
+    if (kitab.title.includes('نهاية الزين') || kitab.title.includes('0084') || kitab.subtitle?.includes('نهاية الزين')) return 2;
+    if (kitab.title.includes('فتح المعين')) return 9;
+    if (kitab.title.includes('كاشفة السجا')) return 11;
+    if (kitab.title.includes('رياض الصالحين')) return 14;
+    return 0;
+  });
+
+  useEffect(() => {
+    let isCancelled = false;
+    if (pdfDoc) {
+      detectPdfCoverOffset(pdfDoc).then((offset) => {
+        if (!isCancelled && offset > 0) {
+          setPdfCoverOffset(offset);
+        }
+      });
+    } else {
+      if (kitab.title.includes('نهاية الزين') || kitab.title.includes('0084') || kitab.subtitle?.includes('نهاية الزين')) setPdfCoverOffset(2);
+      else if (kitab.title.includes('فتح المعين')) setPdfCoverOffset(9);
+      else if (kitab.title.includes('كاشفة السجا')) setPdfCoverOffset(11);
+      else if (kitab.title.includes('رياض الصالحين')) setPdfCoverOffset(14);
+    }
+    return () => {
+      isCancelled = true;
+    };
+  }, [pdfDoc, kitab.title, kitab.subtitle]);
+
+  const handleChapterClick = async (ch: KitabChapter) => {
+    setShowTocDrawer(false);
+
+    if (pdfDoc) {
+      try {
+        const numPages = Math.min(pdfDoc.numPages, kitab.totalPages);
+        const pureTitle = extractArabicTitleOnly(ch.title.split(':')[0]);
+        const cleanTitle = stripArabicTashkeel(pureTitle);
+        const words = cleanTitle
+          .split(/\s+/)
+          .filter((w) => w.length >= 2 && !/^(في|عن|على|من|إلى|مع|أن|إن|هو|هي)$/.test(w));
+
+        if (words.length >= 1) {
+          const corePhrase3 = words.slice(0, 3).join(' ');
+          const corePhrase2 = words.slice(0, 2).join(' ');
+          const corePhrase1 = words[0];
+
+          for (let p = 1; p <= numPages; p++) {
+            const page = await pdfDoc.getPage(p);
+            const txt = await page.getTextContent();
+            const pageText = stripArabicTashkeel(txt.items.map((it: any) => it.str || '').join(' '));
+
+            if (
+              (corePhrase3.length >= 3 && pageText.includes(corePhrase3)) ||
+              (corePhrase2.length >= 3 && pageText.includes(corePhrase2)) ||
+              (corePhrase1.length >= 4 && pageText.includes(corePhrase1) && p > 1)
+            ) {
+              onPageChange(p);
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Error finding exact chapter target sheet:', e);
+      }
+    }
+
+    const targetSheet = Math.min(
+      kitab.totalPages,
+      Math.max(1, ch.startPage + pdfCoverOffset)
+    );
+    onPageChange(targetSheet);
+  };
+
+  const formatPageLabel = (fileSheet: number) => {
+    if (pdfCoverOffset > 0) {
+      if (fileSheet <= pdfCoverOffset) {
+        const roman = toRomanNumeral(fileSheet);
+        return `Hal. ${roman}`;
+      }
+      const mainPageNum = fileSheet - pdfCoverOffset;
+      return `Hal. ${mainPageNum}`;
+    }
+    return `Hal. ${fileSheet}`;
+  };
+  const getChapterDisplayPage = (startPage: number) => {
+    return startPage;
+  };
+
   const isDouble = settings.spreadMode === 'double';
 
   const leftPageNum = isDouble
@@ -810,7 +946,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                 : 'Sorot teks untuk menulis hasyiyah'}
             </span>
             <span className="font-semibold">
-              — {String(pageData.pageNumber).padStart(2, '0')} —
+              — {formatPageLabel(pageData.pageNumber)} —
             </span>
           </div>
         </footer>
@@ -1299,10 +1435,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                     <button
                       key={ch.id}
                       type="button"
-                      onClick={() => {
-                        onPageChange(ch.startPage);
-                        setShowTocDrawer(false);
-                      }}
+                      onClick={() => handleChapterClick(ch)}
                       className={`text-right p-3.5 border transition-all flex flex-col justify-between gap-2.5 ${
                         isCurrentChapter
                           ? 'border-[#78350F] bg-[#78350F]/10 shadow-md ring-1 ring-[#78350F]'
@@ -1316,7 +1449,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                         </span>
                         <div className="flex items-center gap-1.5">
                           <span className="font-bold px-2 py-0.5 bg-[#78350F]/10 border border-[#78350F]/30 text-[#78350F] text-[11px]">
-                            ص {ch.startPage}
+                            ص {getChapterDisplayPage(ch.startPage)}
                           </span>
                           <span className="text-[11px] text-[#78716C]">
                             #{ch.number}
@@ -1422,9 +1555,46 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
               {/* Editable Chapters List */}
               <div className="space-y-2 overflow-y-auto max-h-[280px] pr-1">
-                <p className="text-xs font-semibold text-[#57534E] mb-2 font-mono-tabular">
-                  Daftar Bab Terdaftar ({editingChapters.length}):
-                </p>
+                <div className="flex items-center justify-between pb-1 mb-1 font-mono-tabular text-xs">
+                  <p className="font-semibold text-[#57534E]">
+                    Daftar Bab Terdaftar ({editingChapters.length}):
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-[#78716C] font-sans">Geser Semua:</span>
+                    <button
+                      type="button"
+                      onClick={() => handleShiftEditingPages(-5)}
+                      className="px-1.5 py-0.5 bg-white border border-[#D6CEBE] hover:bg-[#78350F] hover:text-white text-[#1C1917] text-[10px] font-bold transition-colors"
+                      title="Geser nomor semua bab -5 lembar"
+                    >
+                      -5
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleShiftEditingPages(-1)}
+                      className="px-1.5 py-0.5 bg-white border border-[#D6CEBE] hover:bg-[#78350F] hover:text-white text-[#1C1917] text-[10px] font-bold transition-colors"
+                      title="Geser nomor semua bab -1 lembar"
+                    >
+                      -1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleShiftEditingPages(1)}
+                      className="px-1.5 py-0.5 bg-white border border-[#D6CEBE] hover:bg-[#78350F] hover:text-white text-[#1C1917] text-[10px] font-bold transition-colors"
+                      title="Geser nomor semua bab +1 lembar"
+                    >
+                      +1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleShiftEditingPages(5)}
+                      className="px-1.5 py-0.5 bg-white border border-[#D6CEBE] hover:bg-[#78350F] hover:text-white text-[#1C1917] text-[10px] font-bold transition-colors"
+                      title="Geser nomor semua bab +5 lembar"
+                    >
+                      +5
+                    </button>
+                  </div>
+                </div>
                 {editingChapters.length === 0 ? (
                   <p className="text-xs text-[#78716C] italic p-4 text-center bg-white border border-[#E2DCD0]">
                     Belum ada bab terdaftar. Tambahkan bab baru di atas atau pindai otomatis dari PDF.
@@ -1699,8 +1869,8 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
               <div className="flex flex-col items-center w-full max-w-md gap-1.5">
                 <div className="flex items-center justify-between w-full text-xs font-mono-tabular">
                   <span>
-                    Halaman {leftPageNum}
-                    {rightPageNum ? `–${rightPageNum}` : ''} dari {kitab.totalPages}
+                    {formatPageLabel(leftPageNum)}
+                    {rightPageNum ? ` – ${formatPageLabel(rightPageNum)}` : ''} (Total {kitab.totalPages} Lembar PDF)
                   </span>
                   <span>{progressPercentage}% Selesai</span>
                 </div>

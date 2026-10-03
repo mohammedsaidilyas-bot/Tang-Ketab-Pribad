@@ -49,6 +49,7 @@ export interface KitabDocument {
   chapters: KitabChapter[];
   pages: KitabPage[];
   pdfBlobKey?: string;
+  coverOffset?: number;
 }
 
 export interface ReaderSettings {

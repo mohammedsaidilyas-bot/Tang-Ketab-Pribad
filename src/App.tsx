@@ -23,6 +23,7 @@ import { PocketBookReader } from './components/PocketBookReader';
 import { PdfUploadModal } from './components/PdfUploadModal';
 import {
   detectOrGenerateKitabChapters,
+  detectPdfCoverOffset,
   loadPdfArrayBuffer,
   createPdfLoadingTask,
   extractArabicTitleOnly,
@@ -250,9 +251,18 @@ export function App() {
         }
 
         const detected = await detectOrGenerateKitabChapters(loadedDoc, k.title, k.totalPages);
+        const detectedOffset = loadedDoc ? await detectPdfCoverOffset(loadedDoc) : 0;
         if (detected && detected.length > 0) {
           setKitabs((prev) =>
-            prev.map((item) => (item.id === k.id ? { ...item, chapters: detected } : item))
+            prev.map((item) =>
+              item.id === k.id
+                ? {
+                    ...item,
+                    chapters: detected,
+                    coverOffset: detectedOffset > 0 ? detectedOffset : item.coverOffset,
+                  }
+                : item
+            )
           );
         }
       }
