@@ -64,20 +64,40 @@ export async function loadPdfArrayBuffer(key: string): Promise<ArrayBuffer | nul
   }
 }
 
-export async function getOrLoadPdfDoc(blobKey: string, rawBuffer?: ArrayBuffer): Promise<any> {
-  if (globalPdfDocCache.has(blobKey)) {
-    return globalPdfDocCache.get(blobKey);
+export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string | ArrayBuffer): Promise<any> {
+  const cacheKey = blobKey || (typeof urlOrRawBuffer === 'string' ? urlOrRawBuffer : '');
+  if (cacheKey && globalPdfDocCache.has(cacheKey)) {
+    return globalPdfDocCache.get(cacheKey);
   }
-  let buffer = rawBuffer;
-  if (!buffer) {
+
+  let buffer: ArrayBuffer | undefined = typeof urlOrRawBuffer === 'object' ? urlOrRawBuffer : undefined;
+
+  if (!buffer && blobKey) {
     buffer = (await loadPdfArrayBuffer(blobKey)) || undefined;
   }
+
+  if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
+    try {
+      const resp = await fetch(urlOrRawBuffer);
+      if (resp.ok) {
+        buffer = await resp.arrayBuffer();
+        if (blobKey) {
+          await savePdfArrayBuffer(blobKey, buffer);
+        }
+      }
+    } catch (err) {
+      console.warn('Error fetching PDF from URL:', urlOrRawBuffer, err);
+    }
+  }
+
   if (!buffer) return null;
 
   try {
     const task = createPdfLoadingTask(new Uint8Array(buffer));
     const doc = await task.promise;
-    globalPdfDocCache.set(blobKey, doc);
+    if (cacheKey) {
+      globalPdfDocCache.set(cacheKey, doc);
+    }
     return doc;
   } catch (err) {
     console.warn('Failed to load PDF doc into global cache:', err);

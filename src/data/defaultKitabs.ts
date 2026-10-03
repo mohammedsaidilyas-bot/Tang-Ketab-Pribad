@@ -1,6 +1,50 @@
 import { KitabDocument, HasyiyahNote } from '../types/kitab';
 
-// Maktabah Pribadi: Koleksi bersih khusus untuk naskah PDF yang diunggah oleh pengguna
-export const DEFAULT_KITABS: KitabDocument[] = [];
+export const DEFAULT_KITABS: KitabDocument[] = [
+  {
+    id: '0084-nihayatuz-zain',
+    catalogNumber: '0084',
+    title: 'نهاية الزين في إرشاد المبتدئين',
+    subtitle: 'Nihayatuz Zain fi Irsyadil Mubtadiin',
+    author: 'Al-Allamah Syaikh Muhammad Nawawi Al-Bantani',
+    category: 'Fiqih Syafi\'i',
+    language: 'Arab (Tasykil)',
+    totalPages: 400,
+    lastReadPage: 1,
+    bookmarks: [],
+    addedAt: '2026-10-03',
+    isUploadedPdf: true,
+    pdfUrl: '/kitabs/0084-nihayatuz-zain.pdf',
+    pdfBlobKey: 'pdf_0084-nihayatuz-zain.pdf',
+    coverTone: 'forest',
+    coverOffset: 2,
+    chapters: [
+      { id: 'ch-1', number: '01', title: 'ترجمة المليباري صاحب المتن', startPage: 3 },
+      { id: 'ch-2', number: '02', title: 'ترجمة نووي الجاوي صاحب الشرح', startPage: 3 },
+      { id: 'ch-3', number: '03', title: 'خطبة الشارح', startPage: 5 },
+      { id: 'ch-4', number: '04', title: 'خطبة الكتاب', startPage: 7 },
+      { id: 'ch-5', number: '05', title: 'باب الصلاة', startPage: 11 },
+      { id: 'ch-6', number: '06', title: 'فصل في مسائل منثورة', startPage: 15 },
+      { id: 'ch-7', number: '07', title: 'فصل في كيفية الصلاة المتعلقة بواجب', startPage: 55 },
+      { id: 'ch-8', number: '08', title: 'فصل في سجود السهو', startPage: 80 },
+      { id: 'ch-9', number: '09', title: 'فصل في مفسدات الصلاة', startPage: 88 },
+      { id: 'ch-10', number: '10', title: 'فصل في سنن الصلاة المكتوبة قبل الدخول فيها', startPage: 93 },
+      { id: 'ch-11', number: '11', title: 'فصل في صلاة النفل', startPage: 97 },
+      { id: 'ch-12', number: '12', title: 'فصل في الجماعة في الصلاة', startPage: 114 },
+      { id: 'ch-13', number: '13', title: 'فصل في صلاة الجمعة', startPage: 132 },
+      { id: 'ch-14', number: '14', title: 'فصل في الجنائز', startPage: 143 },
+      { id: 'ch-15', number: '15', title: 'باب ما يحرم استعماله من اللباس والحلي وما لا يحرم', startPage: 161 },
+      { id: 'ch-16', number: '16', title: 'باب الزكاة', startPage: 164 },
+      { id: 'ch-17', number: '17', title: 'فصل في أداء الزكاة', startPage: 173 },
+      { id: 'ch-18', number: '18', title: 'باب الصوم', startPage: 180 },
+      { id: 'ch-19', number: '19', title: 'فصل في صوم التطوع', startPage: 191 },
+      { id: 'ch-20', number: '20', title: 'باب الاعتكاف', startPage: 193 },
+      { id: 'ch-21', number: '21', title: 'باب الحج والعمرة', startPage: 196 },
+      { id: 'ch-22', number: '22', title: 'فصل في محظورات النسك', startPage: 209 },
+      { id: 'ch-23', number: '23', title: 'فرع: في أحكام النذور', startPage: 216 },
+    ],
+    pages: [],
+  },
+];
 
 export const DEFAULT_NOTES: HasyiyahNote[] = [];

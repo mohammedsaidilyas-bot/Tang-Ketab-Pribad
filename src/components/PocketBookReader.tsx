@@ -292,15 +292,16 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
   useEffect(() => {
     let isCancelled = false;
-    if (kitab.isUploadedPdf && kitab.pdfBlobKey) {
-      if (globalPdfDocCache.has(kitab.pdfBlobKey)) {
-        const cached = globalPdfDocCache.get(kitab.pdfBlobKey);
+    if (kitab.isUploadedPdf && (kitab.pdfBlobKey || kitab.pdfUrl)) {
+      const activeKey = kitab.pdfBlobKey || kitab.pdfUrl || '';
+      if (globalPdfDocCache.has(activeKey)) {
+        const cached = globalPdfDocCache.get(activeKey);
         if (pdfDoc !== cached) {
           setPdfDoc(cached);
         }
         return;
       }
-      getOrLoadPdfDoc(kitab.pdfBlobKey).then((doc) => {
+      getOrLoadPdfDoc(kitab.pdfBlobKey, kitab.pdfUrl).then((doc) => {
         if (!isCancelled && doc) {
           setPdfDoc(doc);
         }
@@ -309,7 +310,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [kitab.pdfBlobKey, kitab.isUploadedPdf]);
+  }, [kitab.pdfBlobKey, kitab.pdfUrl, kitab.isUploadedPdf]);
 
   // Automatically extract authentic PDF outline / bookmarks on load, or generate intelligent chapters for this specific book
   useEffect(() => {
