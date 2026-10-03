@@ -62,6 +62,76 @@ export interface PdfConversionOptions {
 }
 
 /**
+ * Extracts embedded PDF Bookmarks / Outline (Table of Contents) from a pdfDoc instance
+ */
+export async function extractChaptersFromPdfDoc(pdfDoc: any): Promise<KitabChapter[]> {
+  try {
+    const outline = await pdfDoc.getOutline();
+    if (!outline || !Array.isArray(outline) || outline.length === 0) {
+      return [];
+    }
+
+    const chapters: KitabChapter[] = [];
+
+    async function processItems(items: any[]) {
+      for (const item of items) {
+        if (!item || !item.title) continue;
+        let dest = item.dest;
+        if (typeof dest === 'string') {
+          try {
+            dest = await pdfDoc.getDestination(dest);
+          } catch {
+            dest = null;
+          }
+        }
+        if (Array.isArray(dest) && dest[0]) {
+          try {
+            const pageIndex = await pdfDoc.getPageIndex(dest[0]);
+            const startPage = pageIndex + 1;
+            const cleanTitle = item.title.replace(/\s+/g, ' ').trim();
+            if (cleanTitle && startPage >= 1 && startPage <= pdfDoc.numPages) {
+              chapters.push({
+                id: `ch-outline-${startPage}-${Math.random().toString(36).slice(2, 6)}`,
+                number: String(chapters.length + 1).padStart(2, '0'),
+                title: cleanTitle,
+                startPage,
+              });
+            }
+          } catch (e) {
+            console.warn('Could not resolve page index for destination:', e);
+          }
+        }
+
+        if (Array.isArray(item.items) && item.items.length > 0) {
+          await processItems(item.items);
+        }
+      }
+    }
+
+    await processItems(outline);
+
+    // Sort by start page ascending
+    chapters.sort((a, b) => a.startPage - b.startPage);
+
+    // Deduplicate identical title & startPage
+    const uniqueChapters: KitabChapter[] = [];
+    for (const ch of chapters) {
+      if (!uniqueChapters.some((u) => u.startPage === ch.startPage && u.title === ch.title)) {
+        uniqueChapters.push({
+          ...ch,
+          number: String(uniqueChapters.length + 1).padStart(2, '0'),
+        });
+      }
+    }
+
+    return uniqueChapters;
+  } catch (err) {
+    console.warn('Error extracting outline from PDF:', err);
+    return [];
+  }
+}
+
+/**
  * Extracts text & structure from a real PDF file and converts it into a Tang Ketab PocketBook document
  */
 export async function convertPdfFileToKitab(
@@ -77,13 +147,23 @@ export async function convertPdfFileToKitab(
   const pdfDoc = await loadingTask.promise;
   const numPages = pdfDoc.numPages;
 
+  // 1. First, attempt to extract authentic embedded PDF outline / bookmarks
+  let chapters: KitabChapter[] = await extractChaptersFromPdfDoc(pdfDoc);
+
   const pages: KitabPage[] = [];
-  const chapters: KitabChapter[] = [];
-  let currentChapterTitle = 'Bagian I · Naskah Utama';
+  const headingRegex = /^(bab|fasal|fasl|kitab|muqaddimah|khotimah|khatimah|pasal|bagian|juz|باب|فصل|كتاب|مقدمة|خاتمة|تنبيه|فائدة|فرع|مسألة)\b/i;
+
+  let currentChapterTitle = chapters[0]?.title || 'Muqaddimah & Halaman Awal';
 
   for (let i = 1; i <= numPages; i++) {
     if (options.onProgress) {
       options.onProgress(i, numPages);
+    }
+
+    // Check if a chapter starts on this page from outline
+    const matchedOutlineChapter = chapters.find((ch) => ch.startPage === i);
+    if (matchedOutlineChapter) {
+      currentChapterTitle = matchedOutlineChapter.title;
     }
 
     const page = await pdfDoc.getPage(i);
@@ -106,30 +186,20 @@ export async function convertPdfFileToKitab(
     lineBuckets.sort((a, b) => b.y - a.y);
     const rawLines = lineBuckets.map((b) => b.text.replace(/\s+/g, ' ').trim()).filter(Boolean);
 
-    if (rawLines.length > 0) {
-      const firstLine = rawLines[0];
-      const isHeading =
-        /^(bab|fasal|muqaddimah|kaidah|bagian|chapter|juz)\b/i.test(firstLine) ||
-        (i === 1 && firstLine.length < 75);
-
-      if (isHeading) {
-        currentChapterTitle = firstLine;
-        chapters.push({
-          id: `ch-${i}`,
-          number: String(chapters.length + 1).padStart(2, '0'),
-          title: firstLine,
-          startPage: i,
-        });
+    // 2. If no outline existed, scan page lines for Arabic or Latin chapter headings
+    if (chapters.length === 0 && rawLines.length > 0) {
+      for (const line of rawLines) {
+        if (headingRegex.test(line) && line.length < 120) {
+          currentChapterTitle = line;
+          chapters.push({
+            id: `ch-${i}-${chapters.length}`,
+            number: String(chapters.length + 1).padStart(2, '0'),
+            title: line,
+            startPage: i,
+          });
+          break;
+        }
       }
-    }
-
-    if (chapters.length === 0 && i === 1) {
-      chapters.push({
-        id: 'ch-1',
-        number: '01',
-        title: 'Muqaddimah & Halaman Awal',
-        startPage: 1,
-      });
     }
 
     const paragraphs: string[] = [];
@@ -156,7 +226,7 @@ export async function convertPdfFileToKitab(
 
     if (paragraphs.length === 0) {
       paragraphs.push(
-        `[Halaman ${i} merupakan halaman ilustrasi/pindaian gambar. Gunakan tombol "Lembar PDF Asli" di bilah atas pembaca untuk melihat tampilan visual asli halaman ini secara penuh.]`
+        `[Halaman ${i} merupakan halaman pindaian/ilustrasi. Gunakan tombol "Lembar PDF Asli" untuk melihat visual halaman ini secara penuh.]`
       );
     }
 
@@ -168,15 +238,14 @@ export async function convertPdfFileToKitab(
     });
   }
 
-  if (chapters.length === 1 && numPages >= 4) {
-    for (let p = 3; p <= numPages; p += 3) {
-      chapters.push({
-        id: `ch-auto-${p}`,
-        number: String(chapters.length + 1).padStart(2, '0'),
-        title: `Fasal Lanjutan · Halaman ${p}`,
-        startPage: p,
-      });
-    }
+  // If still no chapters were found, add a single clean chapter for Page 1
+  if (chapters.length === 0) {
+    chapters.push({
+      id: 'ch-1',
+      number: '01',
+      title: 'Muqaddimah & Halaman Awal',
+      startPage: 1,
+    });
   }
 
   const cleanFileName = file.name.replace(/\.pdf$/i, '').replace(/[-_]+/g, ' ');

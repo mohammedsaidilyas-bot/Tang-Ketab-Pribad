@@ -16,9 +16,15 @@ import {
   Check,
   Smartphone,
   Upload,
+  Edit3,
+  RotateCw,
+  Save,
+  Sparkles,
+  X,
 } from 'lucide-react';
 import {
   HasyiyahNote,
+  KitabChapter,
   KitabDocument,
   KitabPage,
   NoteCategory,
@@ -26,7 +32,11 @@ import {
   ReaderSettings,
 } from '../types/kitab';
 import * as pdfjsLib from 'pdfjs-dist';
-import { renderPdfPageToCanvas, loadPdfArrayBuffer } from '../utils/pdfProcessor';
+import {
+  renderPdfPageToCanvas,
+  loadPdfArrayBuffer,
+  extractChaptersFromPdfDoc,
+} from '../utils/pdfProcessor';
 
 interface PocketBookReaderProps {
   kitab: KitabDocument;
@@ -34,6 +44,7 @@ interface PocketBookReaderProps {
   settings: ReaderSettings;
   onUpdateSettings: (partial: Partial<ReaderSettings>) => void;
   onPageChange: (newPage: number) => void;
+  onUpdateChapters?: (kitabId: string, chapters: KitabChapter[]) => void;
   onToggleBookmark: (pageNumber: number) => void;
   onAddNote: (note: Omit<HasyiyahNote, 'id' | 'createdAt'>) => void;
   onDeleteNote: (noteId: string) => void;
@@ -176,6 +187,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   settings,
   onUpdateSettings,
   onPageChange,
+  onUpdateChapters,
   onToggleBookmark,
   onAddNote,
   onDeleteNote,
@@ -183,6 +195,13 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   onBackToLibrary,
 }) => {
   const [showTocDrawer, setShowTocDrawer] = useState(false);
+  const [showTocEditModal, setShowTocEditModal] = useState(false);
+  const [editingChapters, setEditingChapters] = useState<KitabChapter[]>([]);
+  const [newChapterTitle, setNewChapterTitle] = useState('');
+  const [newChapterPage, setNewChapterPage] = useState<number>(1);
+  const [isScanningPdfToc, setIsScanningPdfToc] = useState(false);
+  const [tocUpdateSuccessToast, setTocUpdateSuccessToast] = useState(false);
+
   const [showSearchPopover, setShowSearchPopover] = useState(false);
   const [inBookQuery, setInBookQuery] = useState('');
   const [newNoteText, setNewNoteText] = useState('');
@@ -208,6 +227,84 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       setPdfDoc(null);
     }
   }, [kitab.pdfBlobKey, kitab.isUploadedPdf]);
+
+  // Automatically extract authentic PDF outline / bookmarks on load if available
+  useEffect(() => {
+    if (pdfDoc && kitab.isUploadedPdf && onUpdateChapters) {
+      extractChaptersFromPdfDoc(pdfDoc).then((extracted) => {
+        if (extracted.length > 0) {
+          const isDifferent =
+            extracted.length !== kitab.chapters.length ||
+            extracted.some(
+              (ch, idx) =>
+                ch.title !== kitab.chapters[idx]?.title ||
+                ch.startPage !== kitab.chapters[idx]?.startPage
+            );
+          if (isDifferent) {
+            onUpdateChapters(kitab.id, extracted);
+          }
+        }
+      });
+    }
+  }, [pdfDoc, kitab.id, kitab.isUploadedPdf]);
+
+  const handleOpenTocEditModal = () => {
+    setEditingChapters([...kitab.chapters]);
+    setNewChapterTitle('');
+    setNewChapterPage(currentPage);
+    setShowTocEditModal(true);
+  };
+
+  const handleScanPdfOutline = async () => {
+    if (!pdfDoc) return;
+    setIsScanningPdfToc(true);
+    try {
+      const extracted = await extractChaptersFromPdfDoc(pdfDoc);
+      if (extracted.length > 0) {
+        setEditingChapters(extracted);
+      } else {
+        alert('PDF ini tidak memiliki metadata Bookmark/Outline bawaan. Anda dapat memasukkan nama bab dan halaman secara manual di bawah.');
+      }
+    } finally {
+      setIsScanningPdfToc(false);
+    }
+  };
+
+  const handleAddCustomChapter = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newChapterTitle.trim()) return;
+    const newCh: KitabChapter = {
+      id: `ch-manual-${Date.now()}`,
+      number: String(editingChapters.length + 1).padStart(2, '0'),
+      title: newChapterTitle.trim(),
+      startPage: Math.min(Math.max(1, newChapterPage), kitab.totalPages),
+    };
+    const nextList = [...editingChapters, newCh].sort((a, b) => a.startPage - b.startPage);
+    const renumbered = nextList.map((ch, idx) => ({
+      ...ch,
+      number: String(idx + 1).padStart(2, '0'),
+    }));
+    setEditingChapters(renumbered);
+    setNewChapterTitle('');
+  };
+
+  const handleDeleteChapter = (chId: string) => {
+    const filtered = editingChapters.filter((c) => c.id !== chId);
+    const renumbered = filtered.map((ch, idx) => ({
+      ...ch,
+      number: String(idx + 1).padStart(2, '0'),
+    }));
+    setEditingChapters(renumbered);
+  };
+
+  const handleSaveToc = () => {
+    if (onUpdateChapters) {
+      onUpdateChapters(kitab.id, editingChapters);
+      setTocUpdateSuccessToast(true);
+      setTimeout(() => setTocUpdateSuccessToast(false), 2200);
+    }
+    setShowTocEditModal(false);
+  };
 
   const currentPage = Math.min(Math.max(1, kitab.lastReadPage), kitab.totalPages);
   const isDouble = settings.spreadMode === 'double';
@@ -260,8 +357,10 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   const handlePrevPage = () => {
     if (leftPageNum > 1 && !flipDirection) {
       setFlipDirection('rtl');
-      onPageChange(Math.max(1, leftPageNum - step));
-      setTimeout(() => setFlipDirection(null), 550);
+      setTimeout(() => {
+        onPageChange(Math.max(1, leftPageNum - step));
+        setFlipDirection(null);
+      }, 550);
     }
   };
 
@@ -269,8 +368,10 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     const maxCurrent = rightPageNum || leftPageNum;
     if (maxCurrent < kitab.totalPages && !flipDirection) {
       setFlipDirection('ltr');
-      onPageChange(Math.min(kitab.totalPages, leftPageNum + step));
-      setTimeout(() => setFlipDirection(null), 550);
+      setTimeout(() => {
+        onPageChange(Math.min(kitab.totalPages, leftPageNum + step));
+        setFlipDirection(null);
+      }, 550);
     }
   };
 
@@ -328,15 +429,11 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       const threshold = 0.22; // 22% progress is enough to trigger page turn
       if (dragState.progress >= threshold) {
         if (dragState.direction === 'ltr') {
-          // Trigger next page with beautiful quick automated completing peel transition
-          setFlipDirection('ltr');
+          // Instantly change page on drag release, with no double/follow-up automated flip!
           onPageChange(Math.min(kitab.totalPages, leftPageNum + step));
-          setTimeout(() => setFlipDirection(null), 550);
         } else {
-          // Trigger previous page
-          setFlipDirection('rtl');
+          // Instantly change page on drag release!
           onPageChange(Math.max(1, leftPageNum - step));
-          setTimeout(() => setFlipDirection(null), 550);
         }
       }
     }
@@ -374,8 +471,31 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   };
 
   const themeStyle = THEME_STYLES[settings.theme];
-  const leftPageData = kitab.pages.find((p) => p.pageNumber === leftPageNum) || kitab.pages[0];
-  const rightPageData = rightPageNum
+
+  // Determine what pages are rendered on the underlying static sheets during transition/drag
+  let renderLeftPageNum = leftPageNum;
+  let renderRightPageNum = rightPageNum;
+
+  const isGoingNext = (dragState.isDragging && dragState.direction === 'ltr') || flipDirection === 'ltr';
+  const isGoingPrev = (dragState.isDragging && dragState.direction === 'rtl') || flipDirection === 'rtl';
+
+  if (isGoingNext) {
+    // Going next: Left screen column (renderRightPageNum) changes immediately, right screen column (renderLeftPageNum) stays current
+    renderRightPageNum = rightPageNum ? Math.min(kitab.totalPages, rightPageNum + step) : null;
+    renderLeftPageNum = leftPageNum;
+  } else if (isGoingPrev) {
+    // Going prev: Right screen column (renderLeftPageNum) changes immediately, left screen column (renderRightPageNum) stays current
+    renderLeftPageNum = Math.max(1, leftPageNum - step);
+    renderRightPageNum = rightPageNum;
+  }
+
+  const leftPageData = kitab.pages.find((p) => p.pageNumber === renderLeftPageNum) || kitab.pages[0];
+  const rightPageData = renderRightPageNum
+    ? kitab.pages.find((p) => p.pageNumber === renderRightPageNum) || null
+    : null;
+
+  const currentLeftPageData = kitab.pages.find((p) => p.pageNumber === leftPageNum) || null;
+  const currentRightPageData = rightPageNum
     ? kitab.pages.find((p) => p.pageNumber === rightPageNum) || null
     : null;
 
@@ -399,6 +519,67 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   const progressPercentage = Math.round(
     ((rightPageNum || leftPageNum) / Math.max(1, kitab.totalPages)) * 100
   );
+
+  const nextCurlBackPage = currentLeftPageData || currentRightPageData;
+
+  const prevCurlBackPage = currentRightPageData || currentLeftPageData;
+
+  const renderCurlingPageContent = (pageData: KitabPage | null) => {
+    if (!pageData) return null;
+    const lineLeadingClass =
+      settings.lineHeight === 'loose'
+        ? 'leading-[1.95]'
+        : settings.lineHeight === 'relaxed'
+        ? 'leading-[1.78]'
+        : 'leading-[1.6]';
+
+    return (
+      <div className={`p-4 sm:p-8 lg:p-12 h-full flex flex-col justify-between ${themeStyle.pageBg} ${themeStyle.pageText} select-none overflow-hidden text-left`}>
+        <div>
+          <header className={`flex items-center justify-between pb-3 mb-6 border-b ${themeStyle.border} text-xs ${themeStyle.mutedText}`}>
+            <span className="truncate max-w-[70%] font-sans tracking-wider uppercase">
+              {pageData.chapterTitle || kitab.title}
+            </span>
+            <span className="font-mono-tabular shrink-0">Hal. {pageData.pageNumber}</span>
+          </header>
+
+          {kitab.isUploadedPdf ? (
+            <PdfCanvasPage pdfDoc={pdfDoc} pageNumber={pageData.pageNumber} />
+          ) : (
+            <div className="space-y-4">
+              {settings.showArabicMatan && pageData.arabicMatan && (
+                <div dir="rtl" className={`p-3 border-r border-[#78350F] ${themeStyle.matanBg}`}>
+                  <p className="font-arabic text-right text-base leading-[2]">
+                    {pageData.arabicMatan}
+                  </p>
+                </div>
+              )}
+
+              <div style={{ fontSize: `${settings.fontSize}px` }} className={`space-y-3 ${lineLeadingClass} opacity-90`}>
+                {pageData.paragraphs && pageData.paragraphs.length > 0 ? (
+                  pageData.paragraphs.map((paragraph, idx) => (
+                    <p key={idx} className="text-justify text-xs sm:text-sm">
+                      {paragraph}
+                    </p>
+                  ))
+                ) : (
+                  <div className="space-y-4 py-6">
+                    <div className={`h-3.5 w-full ${themeStyle.accentText} bg-current rounded opacity-25`} />
+                    <div className={`h-3.5 w-11/12 ${themeStyle.accentText} bg-current rounded opacity-25`} />
+                    <div className={`h-3.5 w-5/6 ${themeStyle.accentText} bg-current rounded opacity-25`} />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <footer className={`mt-8 pt-4 border-t ${themeStyle.border} text-center text-[10px] ${themeStyle.mutedText}`}>
+          · {kitab.catalogNumber || 'DOKUMEN PDF PRIBADI'} ·
+        </footer>
+      </div>
+    );
+  };
 
   const renderSingleSheet = (pageData: KitabPage, side: 'left' | 'right' | 'single') => {
     const isBookmarked = kitab.bookmarks.includes(pageData.pageNumber);
@@ -733,17 +914,29 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
       {showTocDrawer && (
         <div className="mb-6 p-5 bg-[#F7F4EE] border border-[#D6CEBE]">
-          <div className="flex items-center justify-between mb-3 pb-2 border-b border-[#E5DEC9]">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-[#E5DEC9]">
             <div>
-              <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
+              <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans font-semibold">
                 Fihris / Daftar Isi Kitab
               </p>
               <h3 className="text-lg font-display font-semibold text-[#1C1917]">
                 {kitab.title}
               </h3>
             </div>
-            <div className="text-xs text-[#57534E] font-mono-tabular">
-               Penanda aktif: {kitab.bookmarks.length > 0 ? kitab.bookmarks.map((b) => `Hal. ${b}`).join(', ') : 'Belum ada'}
+            <div className="flex items-center gap-3">
+              {onUpdateChapters && (
+                <button
+                  type="button"
+                  onClick={handleOpenTocEditModal}
+                  className="px-3 py-1.5 text-xs font-medium bg-[#78350F] text-white hover:bg-[#5C280B] transition-colors flex items-center gap-1.5 shadow-xs"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Kelola / Edit Daftar Isi</span>
+                </button>
+              )}
+              <div className="text-xs text-[#57534E] font-mono-tabular hidden sm:block">
+                 Penanda aktif: {kitab.bookmarks.length > 0 ? kitab.bookmarks.map((b) => `Hal. ${b}`).join(', ') : 'Belum ada'}
+              </div>
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -777,6 +970,177 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification when TOC updated */}
+      {tocUpdateSuccessToast && (
+        <div className="fixed top-6 right-6 z-50 bg-[#1C1917] text-white text-xs px-4 py-3 rounded shadow-xl flex items-center gap-2 animate-fade-in border border-[#78350F]">
+          <Check className="w-4 h-4 text-[#D97706]" />
+          <span>Daftar isi / Fihris kitab berhasil diperbarui!</span>
+        </div>
+      )}
+
+      {/* Interactive Table of Contents (Fihris) Edit & Manage Modal */}
+      {showTocEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
+          <div className="w-full max-w-2xl bg-[#F7F4EE] border-2 border-[#D6CEBE] shadow-2xl p-5 sm:p-7 max-h-[90vh] flex flex-col justify-between overflow-hidden">
+            <div>
+              <div className="flex items-start justify-between pb-3 mb-4 border-b border-[#E5DEC9]">
+                <div>
+                  <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans font-semibold">
+                    Pengelola Daftar Isi (Fihris)
+                  </p>
+                  <h2 className="text-xl font-display font-semibold text-[#1C1917] mt-0.5">
+                    {kitab.title}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTocEditModal(false)}
+                  className="p-1.5 text-[#57534E] hover:text-[#1C1917] hover:bg-[#E2DCD0] transition-colors rounded"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* PDF Auto Scan Option */}
+              {kitab.isUploadedPdf && pdfDoc && (
+                <div className="mb-4 p-3 bg-[#EEDB9F]/40 border border-[#DEC89B] flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 text-[#7C2D12]">
+                    <Sparkles className="w-4 h-4 shrink-0 text-[#78350F]" />
+                    <span>Ekstrak otomatis daftar bab/bookmarks dari dokumen PDF ini.</span>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isScanningPdfToc}
+                    onClick={handleScanPdfOutline}
+                    className="px-3 py-1.5 font-medium bg-[#78350F] text-white hover:bg-[#5C280B] transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                  >
+                    <RotateCw className={`w-3.5 h-3.5 ${isScanningPdfToc ? 'animate-spin' : ''}`} />
+                    <span>{isScanningPdfToc ? 'Memindai...' : 'Pindai Outlines PDF'}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Add Custom Chapter Form */}
+              <form onSubmit={handleAddCustomChapter} className="mb-4 p-3.5 bg-white border border-[#D6CEBE] space-y-3">
+                <p className="text-xs font-semibold text-[#1C1917] flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-[#78350F]" />
+                  <span>Tambah Bab / Fasal Baru Secara Manual:</span>
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  <input
+                    type="text"
+                    value={newChapterTitle}
+                    onChange={(e) => setNewChapterTitle(e.target.value)}
+                    placeholder="Judul Bab / Fasal (misal: bab shalat / باب الصلاة)..."
+                    className="sm:col-span-8 bg-[#FBF9F5] px-3 py-1.5 text-xs border border-[#D6CEBE] focus:outline-none focus:border-[#78350F]"
+                  />
+                  <div className="sm:col-span-4 flex items-center gap-2">
+                    <span className="text-xs text-[#57534E] shrink-0 font-mono-tabular">Hal:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={kitab.totalPages}
+                      value={newChapterPage}
+                      onChange={(e) => setNewChapterPage(parseInt(e.target.value) || 1)}
+                      className="w-full bg-[#FBF9F5] px-2.5 py-1.5 text-xs font-mono-tabular border border-[#D6CEBE] focus:outline-none focus:border-[#78350F]"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!newChapterTitle.trim()}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-[#1C1917] hover:bg-[#78350F] disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
+                    >
+                      + Tambah
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {/* Editable Chapters List */}
+              <div className="space-y-2 overflow-y-auto max-h-[280px] pr-1">
+                <p className="text-xs font-semibold text-[#57534E] mb-2 font-mono-tabular">
+                  Daftar Bab Terdaftar ({editingChapters.length}):
+                </p>
+                {editingChapters.length === 0 ? (
+                  <p className="text-xs text-[#78716C] italic p-4 text-center bg-white border border-[#E2DCD0]">
+                    Belum ada bab terdaftar. Tambahkan bab baru di atas atau pindai otomatis dari PDF.
+                  </p>
+                ) : (
+                  editingChapters.map((ch, idx) => (
+                    <div
+                      key={ch.id || idx}
+                      className="flex items-center gap-2 p-2 bg-white border border-[#D6CEBE] text-xs"
+                    >
+                      <span className="w-6 text-center font-mono-tabular text-[#78350F] font-bold shrink-0">
+                        {ch.number || String(idx + 1).padStart(2, '0')}
+                      </span>
+                      <input
+                        type="text"
+                        value={ch.title}
+                        onChange={(e) => {
+                          const updatedTitle = e.target.value;
+                          setEditingChapters((prev) =>
+                            prev.map((item) => (item.id === ch.id ? { ...item, title: updatedTitle } : item))
+                          );
+                        }}
+                        className="flex-1 bg-[#FBF9F5] px-2.5 py-1 text-xs border border-[#E2DCD0] focus:outline-none focus:border-[#78350F]"
+                      />
+                      <div className="flex items-center gap-1 shrink-0 font-mono-tabular">
+                        <span className="text-[#57534E]">Hal:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={kitab.totalPages}
+                          value={ch.startPage}
+                          onChange={(e) => {
+                            const newStart = parseInt(e.target.value) || 1;
+                            setEditingChapters((prev) =>
+                              prev.map((item) => (item.id === ch.id ? { ...item, startPage: newStart } : item))
+                            );
+                          }}
+                          className="w-16 bg-[#FBF9F5] px-2 py-1 text-xs text-center border border-[#E2DCD0] focus:outline-none focus:border-[#78350F]"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteChapter(ch.id)}
+                        className="p-1.5 text-[#A8A29E] hover:text-[#9A3412] transition-colors shrink-0"
+                        title="Hapus bab ini"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-4 mt-4 border-t border-[#E5DEC9] flex items-center justify-between gap-3">
+              <span className="text-xs text-[#57534E]">
+                Total {editingChapters.length} Bab Fihris
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTocEditModal(false)}
+                  className="px-4 py-2 text-xs font-medium border border-[#D6CEBE] bg-white hover:bg-[#EBE6DF] text-[#1C1917] transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveToc}
+                  className="px-5 py-2 text-xs font-medium text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors flex items-center gap-1.5 shadow-xs"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Simpan Daftar Isi</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -817,33 +1181,33 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
               {/* Real-time drag sheet for Next Page (LTR) */}
               {dragState.isDragging && dragState.direction === 'ltr' && (
-                <div className="absolute inset-0 pointer-events-none z-30 flex">
+                <div className="absolute inset-0 pointer-events-none z-30 flex" dir="ltr">
                   {/* Left half - Curling page */}
                   <div className="w-1/2 h-full relative book-perspective">
                     <div 
-                      className={`absolute inset-0 border border-[#D6CEBE]/40 rounded-r-md ${themeStyle.pageBg}`}
+                      className={`absolute inset-0 border border-[#D6CEBE]/30 rounded-r-md ${themeStyle.pageBg} overflow-hidden`}
                       style={{
                         transform: `rotateY(${dragState.progress * 135}deg) skewY(${dragState.progress * 3}deg) translateX(${dragState.progress * 8}px)`,
                         transformOrigin: 'right center',
-                        boxShadow: `${dragState.progress * 30}px 12px 35px rgba(28, 25, 23, ${dragState.progress * 0.22})`,
+                        boxShadow: `${dragState.progress * 6}px 3px 12px rgba(0, 0, 0, ${dragState.progress * 0.05})`,
                         transformStyle: 'preserve-3d',
                       }}
                     >
-                      {/* Paper thickness/shading overlay */}
-                      <div 
-                        className="absolute inset-0 bg-gradient-to-l from-black/15 via-white/20 to-black/5 pointer-events-none"
-                        style={{ opacity: dragState.progress }}
-                      />
-                      <div className="absolute left-0 top-0 bottom-0 w-[15px] bg-gradient-to-r from-black/20 to-transparent" />
+                      <div className={`absolute inset-0 ${themeStyle.pageBg}`} style={{ backfaceVisibility: 'hidden', transform: 'translateZ(0.5px)' }}>
+                        {renderCurlingPageContent(currentRightPageData)}
+                      </div>
+                      <div className={`absolute inset-0 ${themeStyle.pageBg}`} style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg) translateZ(0.5px)' }}>
+                        {renderCurlingPageContent(nextCurlBackPage)}
+                      </div>
                     </div>
                   </div>
                   {/* Right half - Shadow overlay */}
-                  <div className="w-1/2 h-full relative overflow-hidden bg-black/5">
+                  <div className="w-1/2 h-full relative overflow-hidden">
                     <div 
-                      className="absolute left-0 top-0 bottom-0 w-32 bg-gradient-to-r from-black/25 via-black/10 to-transparent"
+                      className="absolute left-0 top-0 bottom-0 w-24 bg-gradient-to-r from-black/10 via-black/3 to-transparent"
                       style={{
                         transform: `translateX(${(dragState.progress - 1) * 100}%)`,
-                        opacity: dragState.progress * 0.4,
+                        opacity: dragState.progress * 0.2,
                       }}
                     />
                   </div>
@@ -852,34 +1216,34 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
               {/* Real-time drag sheet for Prev Page (RTL) */}
               {dragState.isDragging && dragState.direction === 'rtl' && (
-                <div className="absolute inset-0 pointer-events-none z-30 flex">
+                <div className="absolute inset-0 pointer-events-none z-30 flex" dir="ltr">
                   {/* Left half - Shadow overlay */}
-                  <div className="w-1/2 h-full relative overflow-hidden bg-black/5">
+                  <div className="w-1/2 h-full relative overflow-hidden">
                     <div 
-                      className="absolute right-0 top-0 bottom-0 w-32 bg-gradient-to-l from-black/25 via-black/10 to-transparent"
+                      className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-black/10 via-black/3 to-transparent"
                       style={{
                         transform: `translateX(${(1 - dragState.progress) * 100}%)`,
-                        opacity: dragState.progress * 0.4,
+                        opacity: dragState.progress * 0.2,
                       }}
                     />
                   </div>
                   {/* Right half - Curling page */}
                   <div className="w-1/2 h-full relative book-perspective">
                     <div 
-                      className={`absolute inset-0 border border-[#D6CEBE]/40 rounded-l-md ${themeStyle.pageBg}`}
+                      className={`absolute inset-0 border border-[#D6CEBE]/30 rounded-l-md ${themeStyle.pageBg} overflow-hidden`}
                       style={{
                         transform: `rotateY(${-dragState.progress * 135}deg) skewY(${-dragState.progress * 3}deg) translateX(${-dragState.progress * 8}px)`,
                         transformOrigin: 'left center',
-                        boxShadow: `-${dragState.progress * 30}px 12px 35px rgba(28, 25, 23, ${dragState.progress * 0.22})`,
+                        boxShadow: `-${dragState.progress * 6}px 3px 12px rgba(0, 0, 0, ${dragState.progress * 0.05})`,
                         transformStyle: 'preserve-3d',
                       }}
                     >
-                      {/* Paper thickness/shading overlay */}
-                      <div 
-                        className="absolute inset-0 bg-gradient-to-r from-black/15 via-white/20 to-black/5 pointer-events-none"
-                        style={{ opacity: dragState.progress }}
-                      />
-                      <div className="absolute right-0 top-0 bottom-0 w-[15px] bg-gradient-to-l from-black/20 to-transparent" />
+                      <div className={`absolute inset-0 ${themeStyle.pageBg}`} style={{ backfaceVisibility: 'hidden', transform: 'translateZ(0.5px)' }}>
+                        {renderCurlingPageContent(currentLeftPageData)}
+                      </div>
+                      <div className={`absolute inset-0 ${themeStyle.pageBg}`} style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg) translateZ(0.5px)' }}>
+                        {renderCurlingPageContent(prevCurlBackPage)}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -887,41 +1251,47 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
               {/* 3D Curling Sheet Overlay (Seperti Video) */}
               {flipDirection === 'rtl' && (
-                <div className="absolute inset-0 pointer-events-none z-30 flex">
+                <div className="absolute inset-0 pointer-events-none z-30 flex" dir="ltr">
                   {/* Left half has dynamic shadow sweep */}
-                  <div className="w-1/2 h-full relative overflow-hidden bg-black/5">
-                    <div className="absolute right-0 top-0 bottom-0 w-32 bg-gradient-to-l from-black/20 via-black/10 to-transparent sweeping-shadow-rtl" />
+                  <div className="w-1/2 h-full relative overflow-hidden">
+                    <div className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-black/10 via-black/3 to-transparent sweeping-shadow-rtl" />
                   </div>
                   {/* Right half is the curling paper leaf */}
                   <div className="w-1/2 h-full relative book-perspective">
                     <div 
-                      className={`absolute inset-0 border border-[#D6CEBE]/40 shadow-2xl rounded-l-md leaf-turn-rtl ${themeStyle.pageBg}`}
+                      className={`absolute inset-0 border border-[#D6CEBE]/30 shadow-lg rounded-l-md leaf-turn-rtl ${themeStyle.pageBg} overflow-hidden`}
                       style={{ transformStyle: 'preserve-3d' }}
                     >
-                      {/* Paper thickness and curl shadow overlay */}
-                      <div className="absolute inset-0 bg-gradient-to-r from-black/15 via-white/25 to-black/5 pointer-events-none" />
-                      <div className="absolute right-0 top-0 bottom-0 w-[15px] bg-gradient-to-l from-black/25 to-transparent" />
+                      <div className={`absolute inset-0 ${themeStyle.pageBg}`} style={{ backfaceVisibility: 'hidden', transform: 'translateZ(0.5px)' }}>
+                        {renderCurlingPageContent(currentLeftPageData)}
+                      </div>
+                      <div className={`absolute inset-0 ${themeStyle.pageBg}`} style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg) translateZ(0.5px)' }}>
+                        {renderCurlingPageContent(prevCurlBackPage)}
+                      </div>
                     </div>
                   </div>
                 </div>
               )}
 
               {flipDirection === 'ltr' && (
-                <div className="absolute inset-0 pointer-events-none z-30 flex">
+                <div className="absolute inset-0 pointer-events-none z-30 flex" dir="ltr">
                   {/* Left half is the curling paper leaf */}
                   <div className="w-1/2 h-full relative book-perspective">
                     <div 
-                      className={`absolute inset-0 border border-[#D6CEBE]/40 shadow-2xl rounded-r-md leaf-turn-ltr ${themeStyle.pageBg}`}
+                      className={`absolute inset-0 border border-[#D6CEBE]/30 shadow-lg rounded-r-md leaf-turn-ltr ${themeStyle.pageBg} overflow-hidden`}
                       style={{ transformStyle: 'preserve-3d' }}
                     >
-                      {/* Paper thickness and curl shadow overlay */}
-                      <div className="absolute inset-0 bg-gradient-to-l from-black/15 via-white/25 to-black/5 pointer-events-none" />
-                      <div className="absolute left-0 top-0 bottom-0 w-[15px] bg-gradient-to-r from-black/25 to-transparent" />
+                      <div className={`absolute inset-0 ${themeStyle.pageBg}`} style={{ backfaceVisibility: 'hidden', transform: 'translateZ(0.5px)' }}>
+                        {renderCurlingPageContent(currentRightPageData)}
+                      </div>
+                      <div className={`absolute inset-0 ${themeStyle.pageBg}`} style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg) translateZ(0.5px)' }}>
+                        {renderCurlingPageContent(nextCurlBackPage)}
+                      </div>
                     </div>
                   </div>
                   {/* Right half has dynamic shadow sweep */}
-                  <div className="w-1/2 h-full relative overflow-hidden bg-black/5">
-                    <div className="absolute left-0 top-0 bottom-0 w-32 bg-gradient-to-r from-black/20 via-black/10 to-transparent sweeping-shadow-ltr" />
+                  <div className="w-1/2 h-full relative overflow-hidden">
+                    <div className="absolute left-0 top-0 bottom-0 w-24 bg-gradient-to-r from-black/10 via-black/3 to-transparent sweeping-shadow-ltr" />
                   </div>
                 </div>
               )}

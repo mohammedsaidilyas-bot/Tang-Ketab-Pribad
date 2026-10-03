@@ -171,6 +171,12 @@ export function App() {
     );
   };
 
+  const handleUpdateChapters = (kitabId: string, chapters: KitabDocument['chapters']) => {
+    setKitabs((prev) =>
+      prev.map((k) => (k.id === kitabId ? { ...k, chapters } : k))
+    );
+  };
+
   const handleToggleBookmark = (pageNumber: number) => {
     setKitabs((prev) =>
       prev.map((k) => {
@@ -708,6 +714,7 @@ export function App() {
               setSettings((prev) => ({ ...prev, ...partial }))
             }
             onPageChange={handlePageChange}
+            onUpdateChapters={handleUpdateChapters}
             onToggleBookmark={handleToggleBookmark}
             onAddNote={handleAddNote}
             onDeleteNote={handleDeleteNote}
