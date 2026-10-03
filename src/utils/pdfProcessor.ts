@@ -23,6 +23,7 @@ function openPdfDatabase(): Promise<IDBDatabase> {
 }
 
 const inMemoryPdfCache = new Map<string, ArrayBuffer>();
+export const globalPdfDocCache = new Map<string, any>();
 
 export async function savePdfArrayBuffer(key: string, buffer: ArrayBuffer): Promise<void> {
   // Guarantee instant memory availability
@@ -60,6 +61,27 @@ export async function loadPdfArrayBuffer(key: string): Promise<ArrayBuffer | nul
     return result;
   } catch {
     return inMemoryPdfCache.get(key) || null;
+  }
+}
+
+export async function getOrLoadPdfDoc(blobKey: string, rawBuffer?: ArrayBuffer): Promise<any> {
+  if (globalPdfDocCache.has(blobKey)) {
+    return globalPdfDocCache.get(blobKey);
+  }
+  let buffer = rawBuffer;
+  if (!buffer) {
+    buffer = (await loadPdfArrayBuffer(blobKey)) || undefined;
+  }
+  if (!buffer) return null;
+
+  try {
+    const task = createPdfLoadingTask(new Uint8Array(buffer));
+    const doc = await task.promise;
+    globalPdfDocCache.set(blobKey, doc);
+    return doc;
+  } catch (err) {
+    console.warn('Failed to load PDF doc into global cache:', err);
+    return null;
   }
 }
 
@@ -391,6 +413,40 @@ export function normalizeArabicTitle(str: string): string {
 }
 
 export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
+  {
+    id: 'tsamratu-raudhah',
+    name: 'Tsamratu ar-Raudhah asy-Syahiyyah',
+    arabicName: 'ثمرة الروضة الشهية في تحقيق مسائل السفينة',
+    author: 'Syaikh Muhammad bin Ali bin Muhammad Al-Bantani',
+    keywords: [
+      'ثمرة',
+      'الروضة',
+      'الشهية',
+      'ثمره',
+      'الروضه',
+      'الشهيه',
+      'tsamrat',
+      'tsamrot',
+      'raudhah',
+      'raudhoh',
+      'syahiyyah',
+      'syahiyah',
+      'ثمرة الروضة'
+    ],
+    chapters: [
+      'Muqaddimah & Khutbah Naskah (مقدمة الكتاب والتحقيق)',
+      'Fashl I: Ushuluddin, Rukun Islam & Iman (فصل في أصول الدين وأركان الإسلام والإيمان)',
+      'Fashl II: Ahkam Thaharah, Istinja & Bersuci (فصل في أحكام الطهارة والاستنجاء)',
+      'Fashl III: Fardhu Wudhu, Syarat & Pembatalnya (فصل في فروض الوضوء ونواقضه)',
+      'Fashl IV: Ghusl Janabah & Ahkam Tayammum (فصل في موجبات الغسل وأحكام التيمم)',
+      'Fashl V: Shalat Maktubah, Syarat & Rukun (فصل في شروط الصلاة وأركانها)',
+      'Fashl VI: Sujud Sahwi & Shalat Jama\'ah (فصل في سجود السهو وصلاة الجماعة)',
+      'Fashl VII: Ahkamul Janaiz & Tajhizul Mayyit (فصل في أحكام الجنائز وغسل الميت)',
+      'Fashl VIII: Ahkamus Shiyam & Zakat Fitrah (فصل في أحكام الصيام وزكاة الفطر)',
+      'Bab: Mu\'amalat & Buyu\' (باب المعاملات والبيوع)',
+      'Khatimah & Faedah Fiqhiyyah (خاتمة وفوائد فقهية)',
+    ],
+  },
   {
     id: 'an-nashaih-ad-diniyyah',
     name: 'An-Nashaih Ad-Diniyyah',
@@ -867,6 +923,11 @@ export async function convertPdfFileToKitab(
         );
       }
     }
+  }
+
+  // Cache opened document for instantaneous reader opening
+  if (pdfDoc) {
+    globalPdfDocCache.set(pdfBlobKey, pdfDoc);
   }
 
   const numPages = Math.max(1, pdfDoc.numPages || 1);

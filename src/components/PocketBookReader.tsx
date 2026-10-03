@@ -38,6 +38,8 @@ import {
   extractChaptersFromPdfDoc,
   detectOrGenerateKitabChapters,
   createPdfLoadingTask,
+  globalPdfDocCache,
+  getOrLoadPdfDoc,
   POPULAR_TURATS_TEMPLATES,
 } from '../utils/pdfProcessor';
 
@@ -122,10 +124,12 @@ const PdfCanvasPage: React.FC<{
   pageNumber: number;
 }> = ({ pdfDoc, pageNumber }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const renderTaskRef = useRef<any>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
 
   useEffect(() => {
-    let active = true;
+    let isCancelled = false;
+
     if (!pdfDoc) {
       setStatus('loading');
       return;
@@ -139,46 +143,90 @@ const PdfCanvasPage: React.FC<{
       return;
     }
 
+    // Cancel any previous render task on this canvas before starting a new one
+    if (renderTaskRef.current) {
+      try {
+        renderTaskRef.current.cancel();
+      } catch {}
+      renderTaskRef.current = null;
+    }
+
     setStatus('loading');
-    pdfDoc.getPage(pageNumber).then((page: any) => {
-      if (!active) return;
-      const viewport = page.getViewport({ scale: 1.35 });
-      const context = canvasRef.current?.getContext('2d');
-      if (!context) {
-        setStatus('error');
-        return;
+
+    const renderPage = async () => {
+      try {
+        const page = await pdfDoc.getPage(pageNumber);
+        if (isCancelled) return;
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const scale = 1.35;
+        const viewport = page.getViewport({ scale: scale * Math.min(dpr, 2) });
+        const context = canvas.getContext('2d', { alpha: false });
+        if (!context) {
+          if (!isCancelled) setStatus('error');
+          return;
+        }
+
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        canvas.style.width = '100%';
+        canvas.style.height = 'auto';
+
+        const renderContext = {
+          canvasContext: context,
+          viewport: viewport,
+        };
+
+        const renderTask = page.render(renderContext);
+        renderTaskRef.current = renderTask;
+
+        await renderTask.promise;
+        if (!isCancelled) {
+          setStatus('ready');
+        }
+      } catch (err: any) {
+        if (err?.name === 'RenderingCancelledException') {
+          return;
+        }
+        console.warn(`Error rendering PDF page ${pageNumber}:`, err);
+        if (!isCancelled) {
+          setStatus('error');
+        }
       }
-      if (canvasRef.current) {
-        canvasRef.current.height = viewport.height;
-        canvasRef.current.width = viewport.width;
-      }
-      page.render({
-        canvasContext: context,
-        viewport,
-      }).promise.then(() => {
-        if (active) setStatus('ready');
-      }).catch(() => {
-        if (active) setStatus('error');
-      });
-    }).catch(() => {
-      if (active) setStatus('error');
-    });
+    };
+
+    renderPage();
 
     return () => {
-      active = false;
+      isCancelled = true;
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch {}
+        renderTaskRef.current = null;
+      }
     };
   }, [pdfDoc, pageNumber]);
 
   return (
-    <div className="relative w-full flex flex-col items-center justify-center bg-white/40 p-1 border border-[#D6CEBE]/50 shadow-xs">
+    <div className="relative w-full min-h-[360px] flex flex-col items-center justify-center bg-white/60 p-1 border border-[#D6CEBE]/50 shadow-xs overflow-hidden">
       {status === 'loading' && (
-        <div className="flex flex-col items-center justify-center py-16 text-xs text-[#57534E] font-mono-tabular">
-          <p>Memuat Lembar {pageNumber}...</p>
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#FBF9F5]/70 backdrop-blur-xs py-12 text-xs text-[#57534E] font-mono-tabular">
+          <div className="w-5 h-5 border-2 border-[#78350F] border-t-transparent rounded-full animate-spin mb-2" />
+          <p>Menyiapkan Lembar {pageNumber}...</p>
+        </div>
+      )}
+      {status === 'error' && (
+        <div className="p-8 text-center text-xs text-[#9A3412] font-mono-tabular">
+          <p>Lembar {pageNumber} tidak dapat dimuat.</p>
         </div>
       )}
       <canvas
         ref={canvasRef}
-        className={`max-w-full h-auto ${status === 'ready' ? 'block' : 'hidden'}`}
+        className="max-w-full h-auto block shadow-2xs"
       />
     </div>
   );
@@ -212,24 +260,32 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   const [newNoteCategory, setNewNoteCategory] = useState<NoteCategory>('syarah');
   const [activeNoteTargetPage, setActiveNoteTargetPage] = useState<number>(kitab.lastReadPage);
   const [justSavedNote, setJustSavedNote] = useState(false);
-  const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [pdfDoc, setPdfDoc] = useState<any>(() => {
+    if (kitab.pdfBlobKey && globalPdfDocCache.has(kitab.pdfBlobKey)) {
+      return globalPdfDocCache.get(kitab.pdfBlobKey);
+    }
+    return null;
+  });
 
   useEffect(() => {
+    let isCancelled = false;
     if (kitab.isUploadedPdf && kitab.pdfBlobKey) {
-      setPdfDoc(null);
-      loadPdfArrayBuffer(kitab.pdfBlobKey).then((buffer) => {
-        if (buffer) {
-          const loadingTask = createPdfLoadingTask(new Uint8Array(buffer));
-          loadingTask.promise.then((doc) => {
-            setPdfDoc(doc);
-          }).catch((err) => {
-            console.error("Error loading PDF document:", err);
-          });
+      if (globalPdfDocCache.has(kitab.pdfBlobKey)) {
+        const cached = globalPdfDocCache.get(kitab.pdfBlobKey);
+        if (pdfDoc !== cached) {
+          setPdfDoc(cached);
+        }
+        return;
+      }
+      getOrLoadPdfDoc(kitab.pdfBlobKey).then((doc) => {
+        if (!isCancelled && doc) {
+          setPdfDoc(doc);
         }
       });
-    } else {
-      setPdfDoc(null);
     }
+    return () => {
+      isCancelled = true;
+    };
   }, [kitab.pdfBlobKey, kitab.isUploadedPdf]);
 
   // Automatically extract authentic PDF outline / bookmarks on load, or generate intelligent chapters for this specific book
@@ -260,12 +316,14 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
           if (isCancelled) return;
           if (detected && detected.length > 0) {
             const isDifferent =
+              !kitab.chapters ||
               detected.length !== kitab.chapters.length ||
               detected.some(
                 (ch, idx) =>
                   ch.title !== kitab.chapters[idx]?.title ||
                   ch.startPage !== kitab.chapters[idx]?.startPage
               );
+
             if (isDifferent) {
               onUpdateChapters(kitab.id, detected);
             }
@@ -277,7 +335,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [pdfDoc, kitab.id, kitab.title, kitab.totalPages, kitab.isUploadedPdf]);
+  }, [kitab.id, kitab.title, kitab.totalPages, pdfDoc]);
 
   const handleOpenTocEditModal = () => {
     setEditingChapters([...kitab.chapters]);
