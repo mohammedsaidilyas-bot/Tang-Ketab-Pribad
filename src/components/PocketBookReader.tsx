@@ -41,6 +41,8 @@ import {
   globalPdfDocCache,
   getOrLoadPdfDoc,
   extractArabicTitleOnly,
+  stripArabicTashkeel,
+  normalizeArabicTitle,
   POPULAR_TURATS_TEMPLATES,
 } from '../utils/pdfProcessor';
 
@@ -247,6 +249,8 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   onBackToLibrary,
 }) => {
   const [showTocDrawer, setShowTocDrawer] = useState(false);
+  const [tocSearchQuery, setTocSearchQuery] = useState('');
+  const [tocCategoryFilter, setTocCategoryFilter] = useState<'all' | 'kitab' | 'bab' | 'fasal' | 'furu' | 'tanbih'>('all');
   const [showTocEditModal, setShowTocEditModal] = useState(false);
   const [editingChapters, setEditingChapters] = useState<KitabChapter[]>([]);
   const [newChapterTitle, setNewChapterTitle] = useState('');
@@ -293,44 +297,42 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   useEffect(() => {
     let isCancelled = false;
 
-    // For uploaded PDFs, wait until pdfDoc is fully loaded into memory
-    if (kitab.isUploadedPdf && !pdfDoc) {
-      return;
-    }
-
     if (kitab && onUpdateChapters) {
-      const isMissingOrGeneric =
+      const isMissingOrIncomplete =
         !kitab.chapters ||
-        kitab.chapters.length <= 20 ||
+        kitab.chapters.length <= 1 ||
         kitab.chapters.some((c) =>
           c.title.toLowerCase().includes('fasal lanjutan') ||
           /fasal\s+\d+\s*·\s*halaman/i.test(c.title) ||
           /bagian\s+\d+\s*·\s*halaman/i.test(c.title) ||
-          /muqaddimah\s+&\s+lembar\s+awal\s+naskah/i.test(c.title) ||
-          (!kitab.title.toLowerCase().includes('fathul mu') &&
-           !kitab.title.includes('معين') &&
-           c.title.includes('Ash-Shalah / Fiqih Shalat'))
+          /muqaddimah\s+&\s+lembar\s+awal\s+naskah/i.test(c.title)
         );
 
-      if (isMissingOrGeneric || pdfDoc) {
-        detectOrGenerateKitabChapters(pdfDoc, kitab.title, kitab.totalPages).then((detected) => {
-          if (isCancelled) return;
-          if (detected && detected.length > 0) {
-            const isDifferent =
-              !kitab.chapters ||
-              detected.length > kitab.chapters.length ||
+      detectOrGenerateKitabChapters(pdfDoc, kitab.title, kitab.totalPages).then((detected) => {
+        if (isCancelled) return;
+        if (detected && detected.length > 0) {
+          const currentCount = kitab.chapters?.length || 0;
+          // If current list has >= 10 rich chapters and detected has fewer, NEVER overwrite/downgrade!
+          if (currentCount >= 10 && detected.length < currentCount) {
+            return;
+          }
+
+          const isDifferent =
+            isMissingOrIncomplete ||
+            currentCount === 0 ||
+            detected.length > currentCount ||
+            (detected.length === currentCount &&
               detected.some(
                 (ch, idx) =>
                   ch.title !== kitab.chapters[idx]?.title ||
                   ch.startPage !== kitab.chapters[idx]?.startPage
-              );
+              ));
 
-            if (isDifferent) {
-              onUpdateChapters(kitab.id, detected);
-            }
+          if (isDifferent) {
+            onUpdateChapters(kitab.id, detected);
           }
-        });
-      }
+        }
+      });
     }
 
     return () => {
@@ -1013,11 +1015,11 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       )}
 
       {showTocDrawer && (
-        <div className="mb-6 p-5 bg-[#F7F4EE] border border-[#D6CEBE]">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-[#E5DEC9]">
+        <div className="mb-6 p-4 sm:p-5 bg-[#F7F4EE] border border-[#D6CEBE] space-y-4 animate-fade-in shadow-inner">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-[#E5DEC9]">
             <div>
               <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans font-semibold">
-                Fihris / Daftar Isi Kitab
+                Fihris / Daftar Isi Lengkap Kitab
               </p>
               <h3 className="text-lg font-display font-semibold text-[#1C1917]">
                 {kitab.title}
@@ -1052,7 +1054,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                 title="Pindai dan baca otomatis daftar isi / fihris dari berkas PDF ini"
               >
                 <RotateCw className={`w-3.5 h-3.5 ${isScanningPdfToc ? 'animate-spin' : ''}`} />
-                <span>{isScanningPdfToc ? 'Memindai PDF...' : 'Pindai Otomatis Fihris PDF'}</span>
+                <span>{isScanningPdfToc ? 'Memindai PDF...' : 'Pindai Ulang Fihris'}</span>
               </button>
 
               {onUpdateChapters && (
@@ -1065,50 +1067,271 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                   <span>Kelola / Edit</span>
                 </button>
               )}
-              <div className="text-xs text-[#57534E] font-mono-tabular hidden sm:block">
-                 Penanda: {kitab.bookmarks.length > 0 ? kitab.bookmarks.map((b) => `Hal. ${b}`).join(', ') : 'Belum ada'}
-              </div>
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {kitab.chapters.map((ch) => {
-              const isCurrentChapter =
-                currentPage >= ch.startPage &&
-                (!kitab.chapters.find((next) => next.startPage > ch.startPage) ||
-                  currentPage <
-                    (kitab.chapters.find((next) => next.startPage > ch.startPage)?.startPage ||
-                      9999));
-              const pureArabicTitle = extractArabicTitleOnly(ch.title);
-              return (
-                <button
-                  key={ch.id}
-                  type="button"
-                  onClick={() => {
-                    onPageChange(ch.startPage);
-                    setShowTocDrawer(false);
-                  }}
-                  className={`text-right p-3.5 border transition-colors flex flex-col justify-between ${
-                    isCurrentChapter
-                      ? 'border-[#78350F] bg-[#78350F]/10 shadow-xs'
-                      : 'border-[#D6CEBE] bg-white hover:border-[#78350F]'
-                  }`}
-                  dir="rtl"
-                >
-                  <div className="flex items-center justify-between gap-2 mb-2 w-full text-xs text-[#78350F] font-mono-tabular" dir="ltr">
-                    <span className="font-semibold px-2 py-0.5 bg-[#78350F]/10 border border-[#78350F]/30 text-[11px]">
-                      ص {ch.startPage}
-                    </span>
-                    <span className="text-[11px] text-[#57534E]">
-                      {ch.number}
-                    </span>
-                  </div>
-                  <p className="text-base font-arabic font-medium text-[#1C1917] leading-relaxed text-right w-full" dir="rtl">
-                    {pureArabicTitle}
-                  </p>
-                </button>
-              );
-            })}
+
+          {/* Row 1: Dedicated Full-Width Arabic Search Bar */}
+          <div className="w-full relative pt-1" dir="rtl">
+            <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#78716C] pointer-events-none" />
+            <input
+              type="text"
+              dir="rtl"
+              value={tocSearchQuery}
+              onChange={(e) => setTocSearchQuery(e.target.value)}
+              placeholder="ابحث هنا عن الأبواب، الفصول، الفروع، التنبيهات، والمسائل (مثال: صلاة، وضوء، بيع، ربا)..."
+              className="w-full pr-10 pl-10 py-2.5 text-sm sm:text-base font-arabic bg-white border-2 border-[#D6CEBE] text-[#1C1917] placeholder:text-[#A8A29E] placeholder:font-arabic placeholder:text-xs sm:placeholder:text-sm text-right focus:outline-none focus:border-[#78350F] transition-all shadow-xs"
+            />
+            {tocSearchQuery && (
+              <button
+                type="button"
+                onClick={() => setTocSearchQuery('')}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 p-1.5 text-[#78716C] hover:text-[#1C1917] bg-[#F7F4EE] hover:bg-[#E2DCD0] rounded transition-colors"
+                title="مسح البحث · Hapus pencarian"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
+
+          {/* Row 2: Category Filter Tabs */}
+          <div className="w-full overflow-x-auto pb-1 text-xs font-mono-tabular">
+            <div className="flex items-center gap-1.5 flex-nowrap">
+              <button
+                type="button"
+                onClick={() => setTocCategoryFilter('all')}
+                className={`px-3 py-1.5 font-medium border transition-colors whitespace-nowrap ${
+                  tocCategoryFilter === 'all'
+                    ? 'bg-[#78350F] text-white border-[#78350F]'
+                    : 'bg-white text-[#44403C] border-[#D6CEBE] hover:bg-[#EBE6DF]'
+                }`}
+              >
+                Semua ({kitab.chapters.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTocCategoryFilter('kitab')}
+                className={`px-3 py-1.5 font-medium border transition-colors whitespace-nowrap ${
+                  tocCategoryFilter === 'kitab'
+                    ? 'bg-emerald-800 text-white border-emerald-800'
+                    : 'bg-emerald-50 text-emerald-900 border-emerald-200 hover:bg-emerald-100'
+                }`}
+              >
+                📗 Kitab ({kitab.chapters.filter((c) => stripArabicTashkeel(c.title).startsWith('كتاب')).length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTocCategoryFilter('bab')}
+                className={`px-3 py-1.5 font-medium border transition-colors whitespace-nowrap ${
+                  tocCategoryFilter === 'bab'
+                    ? 'bg-amber-800 text-white border-amber-800'
+                    : 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                }`}
+              >
+                📙 Bab ({kitab.chapters.filter((c) => stripArabicTashkeel(c.title).startsWith('باب')).length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTocCategoryFilter('fasal')}
+                className={`px-3 py-1.5 font-medium border transition-colors whitespace-nowrap ${
+                  tocCategoryFilter === 'fasal'
+                    ? 'bg-sky-800 text-white border-sky-800'
+                    : 'bg-sky-50 text-sky-900 border-sky-200 hover:bg-sky-100'
+                }`}
+              >
+                📘 Fasal ({kitab.chapters.filter((c) => stripArabicTashkeel(c.title).startsWith('فصل')).length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTocCategoryFilter('furu')}
+                className={`px-3 py-1.5 font-medium border transition-colors whitespace-nowrap ${
+                  tocCategoryFilter === 'furu'
+                    ? 'bg-rose-800 text-white border-rose-800'
+                    : 'bg-rose-50 text-rose-900 border-rose-200 hover:bg-rose-100'
+                }`}
+              >
+                📕 Furu' ({kitab.chapters.filter((c) => {
+                  const cl = stripArabicTashkeel(c.title);
+                  return cl.startsWith('فرع') || cl.startsWith('مسألة');
+                }).length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTocCategoryFilter('tanbih')}
+                className={`px-3 py-1.5 font-medium border transition-colors whitespace-nowrap ${
+                  tocCategoryFilter === 'tanbih'
+                    ? 'bg-violet-800 text-white border-violet-800'
+                    : 'bg-violet-50 text-violet-900 border-violet-200 hover:bg-violet-100'
+                }`}
+              >
+                💡 Tanbih & Muhimmat ({kitab.chapters.filter((c) => {
+                  const cl = stripArabicTashkeel(c.title);
+                  return cl.startsWith('تنبيه') || cl.startsWith('مهمة') || cl.startsWith('مهمات') || cl.startsWith('فائدة') || cl.startsWith('تتمة');
+                }).length})
+              </button>
+            </div>
+          </div>
+
+          {/* Chapters Grid with Categorized Badges */}
+          {(() => {
+            const listToDisplay = kitab.chapters.filter((ch) => {
+              const clean = stripArabicTashkeel(ch.title);
+              if (tocCategoryFilter === 'kitab' && !clean.startsWith('كتاب')) return false;
+              if (tocCategoryFilter === 'bab' && !clean.startsWith('باب')) return false;
+              if (tocCategoryFilter === 'fasal' && !clean.startsWith('فصل')) return false;
+              if (
+                tocCategoryFilter === 'furu' &&
+                !clean.startsWith('فرع') &&
+                !clean.startsWith('مسألة')
+              ) {
+                return false;
+              }
+              if (
+                tocCategoryFilter === 'tanbih' &&
+                !clean.startsWith('تنبيه') &&
+                !clean.startsWith('مهمة') &&
+                !clean.startsWith('مهمات') &&
+                !clean.startsWith('فائدة') &&
+                !clean.startsWith('تتمة')
+              ) {
+                return false;
+              }
+
+              if (tocSearchQuery.trim()) {
+                const q = tocSearchQuery.trim();
+                const normQ = normalizeArabicTitle(q);
+                const normTitle = normalizeArabicTitle(ch.title);
+                const titleLower = ch.title.toLowerCase();
+
+                if (normTitle.includes(normQ) || titleLower.includes(q.toLowerCase())) {
+                  return true;
+                }
+
+                const tokens = normQ.split(' ').filter(Boolean);
+                if (
+                  tokens.length > 0 &&
+                  tokens.every((tok) => {
+                    const tokNoAl = tok.startsWith('ال') ? tok.slice(2) : tok;
+                    return (
+                      normTitle.includes(tok) ||
+                      (tokNoAl.length >= 2 && normTitle.includes(tokNoAl))
+                    );
+                  })
+                ) {
+                  return true;
+                }
+
+                if (String(ch.startPage) === q || ch.number === q) {
+                  return true;
+                }
+
+                return false;
+              }
+              return true;
+            });
+
+            if (listToDisplay.length === 0) {
+              return (
+                <div className="py-8 px-4 text-center bg-white border border-[#D6CEBE] space-y-3" dir="rtl">
+                  <p className="text-base font-arabic font-medium text-[#1C1917] leading-relaxed">
+                    لم يتم العثور على أي باب أو مسألة تطابق:
+                    <span className="font-bold text-[#78350F] px-1.5 inline-block" dir="rtl">
+                      «{tocSearchQuery}»
+                    </span>
+                  </p>
+                  <p className="text-xs text-[#78716C] font-sans" dir="ltr">
+                    Coba gunakan kata kunci bahasa Arab lain atau klik tombol reset di bawah
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTocSearchQuery('');
+                      setTocCategoryFilter('all');
+                    }}
+                    className="px-4 py-2 text-xs font-medium bg-[#78350F] text-white hover:bg-[#5C280B] transition-colors shadow-xs"
+                  >
+                    إعادة ضبط البحث · Tampilkan Semua Bab
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto pr-1">
+                {listToDisplay.map((ch) => {
+                  const isCurrentChapter =
+                    currentPage >= ch.startPage &&
+                    (!kitab.chapters.find((next) => next.startPage > ch.startPage) ||
+                      currentPage <
+                        (kitab.chapters.find((next) => next.startPage > ch.startPage)?.startPage ||
+                          9999));
+                  const pureArabicTitle = extractArabicTitleOnly(ch.title);
+                  const cleanHeading = stripArabicTashkeel(pureArabicTitle);
+
+                  let badgeStyle = 'bg-purple-100 text-purple-900 border-purple-300';
+                  let badgeLabel = 'مقدمة / خاتمة';
+                  if (cleanHeading.startsWith('كتاب')) {
+                    badgeStyle = 'bg-emerald-100 text-emerald-950 border-emerald-300 font-semibold';
+                    badgeLabel = 'كتاب · Kitab';
+                  } else if (cleanHeading.startsWith('باب')) {
+                    badgeStyle = 'bg-amber-100 text-amber-950 border-amber-300 font-medium';
+                    badgeLabel = 'باب · Bab';
+                  } else if (cleanHeading.startsWith('فصل')) {
+                    badgeStyle = 'bg-sky-100 text-sky-950 border-sky-300 font-medium';
+                    badgeLabel = 'فصل · Fasal';
+                  } else if (cleanHeading.startsWith('فرع')) {
+                    badgeStyle = 'bg-rose-100 text-rose-950 border-rose-300 font-medium';
+                    badgeLabel = 'فرع · Furu\'';
+                  } else if (cleanHeading.startsWith('تنبيه')) {
+                    badgeStyle = 'bg-amber-100 text-amber-950 border-amber-400 font-semibold';
+                    badgeLabel = 'تنبيه · Tanbih';
+                  } else if (cleanHeading.startsWith('مهمة') || cleanHeading.startsWith('مهمات')) {
+                    badgeStyle = 'bg-violet-100 text-violet-950 border-violet-400 font-semibold';
+                    badgeLabel = 'مهمة · Muhimmat';
+                  } else if (cleanHeading.startsWith('فائدة') || cleanHeading.startsWith('فوائد')) {
+                    badgeStyle = 'bg-teal-100 text-teal-950 border-teal-300 font-medium';
+                    badgeLabel = 'فائدة · Faidah';
+                  } else if (cleanHeading.startsWith('مسألة')) {
+                    badgeStyle = 'bg-orange-100 text-orange-950 border-orange-300 font-medium';
+                    badgeLabel = 'مسألة · Mas\'alah';
+                  }
+
+                  return (
+                    <button
+                      key={ch.id}
+                      type="button"
+                      onClick={() => {
+                        onPageChange(ch.startPage);
+                        setShowTocDrawer(false);
+                      }}
+                      className={`text-right p-3.5 border transition-all flex flex-col justify-between gap-2.5 ${
+                        isCurrentChapter
+                          ? 'border-[#78350F] bg-[#78350F]/10 shadow-md ring-1 ring-[#78350F]'
+                          : 'border-[#D6CEBE] bg-white hover:border-[#78350F] hover:bg-[#FBF9F5]'
+                      }`}
+                      dir="rtl"
+                    >
+                      <div className="flex items-center justify-between gap-2 w-full text-xs font-mono-tabular" dir="rtl">
+                        <span className={`text-[10px] px-2 py-0.5 border ${badgeStyle}`}>
+                          {badgeLabel}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold px-2 py-0.5 bg-[#78350F]/10 border border-[#78350F]/30 text-[#78350F] text-[11px]">
+                            ص {ch.startPage}
+                          </span>
+                          <span className="text-[11px] text-[#78716C]">
+                            #{ch.number}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-base font-arabic font-medium text-[#1C1917] leading-relaxed text-right w-full" dir="rtl">
+                        {pureArabicTitle}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
 

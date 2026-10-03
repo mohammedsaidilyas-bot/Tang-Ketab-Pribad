@@ -135,6 +135,21 @@ export function App() {
   const [copiedSummary, setCopiedSummary] = useState(false);
   const [isScanningCatalogToc, setIsScanningCatalogToc] = useState(false);
 
+  // Auto-enrich chapters for existing uploaded kitabs whenever a more complete fihris is available
+  useEffect(() => {
+    kitabs.forEach((k) => {
+      if (k.isUploadedPdf) {
+        detectOrGenerateKitabChapters(null, k.title, k.totalPages).then((detected) => {
+          if (detected && detected.length > (k.chapters?.length || 0)) {
+            setKitabs((prev) =>
+              prev.map((item) => (item.id === k.id ? { ...item, chapters: detected } : item))
+            );
+          }
+        });
+      }
+    });
+  }, []);
+
   // One-time cleanup to ensure all legacy default non-uploaded books are permanently purged
   useEffect(() => {
     setKitabs((prev) => {
