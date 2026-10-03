@@ -299,15 +299,21 @@ export function parseEasternArabicNumber(str: string): number | null {
 }
 
 /**
- * Scans printed Fihris / Table of Contents pages in the PDF (first 25 and last 35 pages)
+ * Scans printed Fihris / Table of Contents pages in the PDF
  */
 async function scanPrintedFihrisPages(pdfDoc: any): Promise<KitabChapter[]> {
   try {
     const numPages = pdfDoc.numPages;
     const candidatePages: number[] = [];
-    for (let p = 1; p <= Math.min(25, numPages); p++) candidatePages.push(p);
-    for (let p = Math.max(26, numPages - 35); p <= numPages; p++) {
-      if (!candidatePages.includes(p)) candidatePages.push(p);
+
+    // For books up to 80 pages, scan all pages; for larger books, check beginning and end
+    if (numPages <= 80) {
+      for (let p = 1; p <= numPages; p++) candidatePages.push(p);
+    } else {
+      for (let p = 1; p <= Math.min(35, numPages); p++) candidatePages.push(p);
+      for (let p = Math.max(36, numPages - 60); p <= numPages; p++) {
+        if (!candidatePages.includes(p)) candidatePages.push(p);
+      }
     }
 
     const fihrisChapters: KitabChapter[] = [];
@@ -322,7 +328,7 @@ async function scanPrintedFihrisPages(pdfDoc: any): Promise<KitabChapter[]> {
       for (const item of textContent.items) {
         if ('str' in item && item.str.trim().length > 0) {
           const y = Math.round(item.transform[5]);
-          const existing = lineBuckets.find((b) => Math.abs(b.y - y) <= 5);
+          const existing = lineBuckets.find((b) => Math.abs(b.y - y) <= 6);
           if (existing) {
             existing.text += (existing.text.endsWith(' ') ? '' : ' ') + item.str;
           } else {
@@ -343,7 +349,8 @@ async function scanPrintedFihrisPages(pdfDoc: any): Promise<KitabChapter[]> {
         fullPageText.includes('جدول المحتويات') ||
         fullPageText.includes('جدول الموضوعات') ||
         fullPageText.includes('daftar isi') ||
-        fullPageText.includes('table of contents');
+        fullPageText.includes('table of contents') ||
+        lines.filter((l) => /[0-9٠-٩]+/.test(l) && (l.includes('فصل') || l.includes('باب') || l.includes('كتاب') || l.includes('مسألة'))).length >= 3;
 
       if (isFihrisPage) {
         for (const rawLine of lines) {
@@ -354,22 +361,28 @@ async function scanPrintedFihrisPages(pdfDoc: any): Promise<KitabChapter[]> {
           }
 
           // Look for line containing title and page number
-          const matchNum = cleanLine.match(/([0-9٠-٩]+)[\s._\-—…:·|/]*$/) || cleanLine.match(/^[\s._\-—…:·|/]*([0-9٠-٩]+)/);
+          const matchNum =
+            cleanLine.match(/([0-9٠-٩]+)[\s._\-—…:·|/]*$/) ||
+            cleanLine.match(/^[\s._\-—…:·|/]*([0-9٠-٩]+)/) ||
+            cleanLine.match(/ص[\s.:]*([0-9٠-٩]+)/i);
+
           if (matchNum) {
             const parsedPage = parseEasternArabicNumber(matchNum[1]);
             if (parsedPage && parsedPage >= 1 && parsedPage <= numPages) {
               const titleOnly = cleanLine
                 .replace(/[0-9٠-٩]+/g, '')
                 .replace(/[._\-—…:·|/]+/g, ' ')
-                .replace(/\b(hal|halaman|p|page|ص)\b/gi, '')
+                .replace(/\b(hal|halaman|p|page|ص|صحيفة|صفحة)\b/gi, '')
                 .trim();
 
-              if (titleOnly.length >= 3 && titleOnly.length <= 110) {
-                if (!fihrisChapters.some((c) => c.startPage === parsedPage || c.title === titleOnly)) {
+              const pureArabic = extractArabicTitleOnly(titleOnly);
+
+              if (pureArabic.length >= 2 && pureArabic.length <= 120) {
+                if (!fihrisChapters.some((c) => c.startPage === parsedPage || c.title === pureArabic)) {
                   fihrisChapters.push({
                     id: `ch-fihris-${parsedPage}-${fihrisChapters.length}`,
                     number: String(fihrisChapters.length + 1).padStart(2, '0'),
-                    title: titleOnly,
+                    title: pureArabic,
                     startPage: parsedPage,
                   });
                 }
@@ -412,6 +425,22 @@ export function normalizeArabicTitle(str: string): string {
     .trim();
 }
 
+export function extractArabicTitleOnly(text: string): string {
+  if (!text) return '';
+  const trimmed = text.trim();
+  // Check for Arabic text in parentheses, e.g. "Fashl (فصل في الطهارة)"
+  const parenMatch = trimmed.match(/\(([\u0600-\u06FF\s0-9٠-٩:.,\-–—]+)\)/);
+  if (parenMatch && parenMatch[1].trim().length >= 2) {
+    return parenMatch[1].trim();
+  }
+  // If there's Arabic characters in the text
+  const arabicMatch = trimmed.match(/[\u0600-\u06FF][\u0600-\u06FF\s0-9٠-٩:.,\-–—"']+/);
+  if (arabicMatch && arabicMatch[0].trim().length >= 2) {
+    return arabicMatch[0].trim();
+  }
+  return trimmed;
+}
+
 export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
   {
     id: 'tsamratu-raudhah',
@@ -434,17 +463,40 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
       'ثمرة الروضة'
     ],
     chapters: [
-      'Muqaddimah & Khutbah Naskah (مقدمة الكتاب والتحقيق)',
-      'Fashl I: Ushuluddin, Rukun Islam & Iman (فصل في أصول الدين وأركان الإسلام والإيمان)',
-      'Fashl II: Ahkam Thaharah, Istinja & Bersuci (فصل في أحكام الطهارة والاستنجاء)',
-      'Fashl III: Fardhu Wudhu, Syarat & Pembatalnya (فصل في فروض الوضوء ونواقضه)',
-      'Fashl IV: Ghusl Janabah & Ahkam Tayammum (فصل في موجبات الغسل وأحكام التيمم)',
-      'Fashl V: Shalat Maktubah, Syarat & Rukun (فصل في شروط الصلاة وأركانها)',
-      'Fashl VI: Sujud Sahwi & Shalat Jama\'ah (فصل في سجود السهو وصلاة الجماعة)',
-      'Fashl VII: Ahkamul Janaiz & Tajhizul Mayyit (فصل في أحكام الجنائز وغسل الميت)',
-      'Fashl VIII: Ahkamus Shiyam & Zakat Fitrah (فصل في أحكام الصيام وزكاة الفطر)',
-      'Bab: Mu\'amalat & Buyu\' (باب المعاملات والبيوع)',
-      'Khatimah & Faedah Fiqhiyyah (خاتمة وفوائد فقهية)',
+      'مقدمة الكتاب وخطبة التحقيق',
+      'فصل في أركان الإسلام الخمسة',
+      'فصل في أركان الإيمان الستة',
+      'فصل في معنى لا إله إلا الله',
+      'فصل في علامات البلوغ في الذكر والأنثى',
+      'فصل في شروط إجزاء الاستنجاء بالحجر',
+      'فصل في فروض الوضوء ونيته',
+      'فصل في أقسام الماء وأحكامه',
+      'فصل في موجبات الغسل ومفروضاته',
+      'فصل في شروط صحة الوضوء والغسل',
+      'فصل في نواقض الوضوء ومبطلاته',
+      'فصل في محرمات الحدثين الأصغر والأكبر',
+      'فصل في أسباب التيمم ومسوغاته',
+      'فصل في فروض التيمم وشروطه ومبطلاته',
+      'فصل في النجاسات وأقسامها وكيفية تطهيرها',
+      'فصل في أحكام الحيض والنفاس والاستحاضة',
+      'فصل في أعذار الصلاة المسقطة والمبيحة',
+      'فصل في شروط صحة الصلاة وقبولها',
+      'فصل في أحداث الصلاة ومبطلاتها',
+      'فصل في أركان الصلاة السبعة عشر',
+      'فصل في شروط تكبيرة الإحرام والفاتحة',
+      'فصل في سنن الأركان وهيئات الصلاة',
+      'فصل في سجدات السهو والتلاوة والشكر',
+      'فصل في أوقات الصلاة والتحريم',
+      'فصل في صلاة الجماعة وشروط القدوة والإمامة',
+      'فصل في صلاة القصر والجمع في السفر',
+      'فصل في صلاة الجمعة وشروط وجوبها وإقامتها',
+      'فصل في أحكام الجنائز: الغسل والتكفين والصلاة والدفن',
+      'فصل في أحكام الزكاة ومصارفها الثمانية',
+      'فصل في أحكام الصيام وشروطه ومفطراته',
+      'فصل في كفارة الفطر وقضاء رمضان',
+      'فصل في الاعتكاف وشروطه',
+      'باب المعاملات والبيوع وأحكام الربا',
+      'خاتمة في التوبة النصوح والدعوات المستجابة والوصايا',
     ],
   },
   {
@@ -452,20 +504,54 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     name: 'An-Nashaih Ad-Diniyyah',
     arabicName: 'النصائح الدينية والوصايا الإيمانية',
     author: 'Al-Imam Al-Habib Abdullah bin Alawi Al-Haddad',
-    keywords: ['نصائح', 'النصائح', 'الدينية', 'الدينيه', 'nashaih', 'nasihat', 'haddad', 'حداد'],
+    keywords: [
+      'نصائح',
+      'النصائح',
+      'الدينية',
+      'الدينيه',
+      'nashaih',
+      'nasihat',
+      'nashoih',
+      'nashoihat',
+      'nashoihuddiniyah',
+      'nashaihud',
+      'diniyah',
+      'diniyyah',
+      'haddad',
+      'حداد',
+      'الوصايا',
+      'الوصايا الإيمانية',
+    ],
     chapters: [
-      'Muqaddimah & Khutbatul Kitab (مقدمة الكتاب)',
-      'Fashl I: Hakikat Taqwa & Keutamaannya (فصل في التقوى)',
-      'Fashl II: Aqidah Ahlus Sunnah wal Jama\'ah (فصل في عقيدة أهل السنة والجماعة)',
-      'Fashl III: Shalat Maktubah, Sunnah & Khusyu\' (فصل في الصلاة والخشوع)',
-      'Fashl IV: Zakat, Sedekah & Harta Halal (فصل في الزكاة والصدقات والورع)',
-      'Fashl V: Puasa Ramadhan & Menjaga Hati (فصل في الصيام وحفظ الجوارح)',
-      'Fashl VI: Ibadah Haji & Ziarah ke Madinah (فصل في الحج والعمرة والزيارة)',
-      'Fashl VII: Amar Ma\'ruf Nahi Munkar & Dakwah (فصل في الأمر بالمعروف والنهي عن المنكر)',
-      'Fashl VIII: Jihad & Nasihat bagi Kaum Muslimin (فصل في الجهاد والنصيحة للمسلمين)',
-      'Fashl IX: Hak Sesama Muslim, Kerabat & Orang Tua (فصل في بر الوالدين وحقوق المسلمين)',
-      'Fashl X: Ikhlas, Mahabbah & Tazkiyatun Nafs (فصل في الإخلاص وسلامة الصدر)',
-      'Fashl XI: Taubat Nasuha, Khauf-Raja\' & Khatimah (فصل في التوبة والمحاسبة والخاتمة)',
+      'مقدمة الكتاب وخطبة المصنف',
+      'فصل في التقوى وحقيقتها وفضلها وثمارها',
+      'فصل في عقيدة أهل السنة والجماعة وأصول الإيمان',
+      'فصل في الصلاة المكتوبة وشروطها وسننها والخشوع فيها',
+      'فصل في المحافظة على صلاة الجماعة في المساجد',
+      'فصل في صلاة النوافل والسنن الرواتب وقيام الليل',
+      'فصل في الزكاة والصدقات والورع في جمع المال وإنفاقه',
+      'فصل في الصيام وآدابه وفضل شهر رمضان المبارك',
+      'فصل في حفظ الجوارح السبعة عن الآثام والمعاصي',
+      'فصل في فضل القرآن الكريم وتلاوته وتدبر آياته',
+      'فصل في الذكر والدعاء والاستغفار في سائر الأوقات',
+      'فصل في الحج والعمرة وزيارة قبر النبي صلى الله عليه وسلم',
+      'فصل في الأمر بالمعروف والنهي عن المنكر والدعوة إلى الله',
+      'فصل في الجهاد في سبيل الله ومجاهدة النفس والهوى',
+      'فصل في النصيحة لعامة المسلمين وخاصتهم وولاتهم',
+      'فصل في بر الوالدين وصلة الأرحام والإحسان إليهما',
+      'فصل في حقوق الأولاد والأهل والزوجين والمماليك',
+      'فصل في حقوق الجيران والأصحاب والفقراء والمساكين',
+      'فصل في حفظ اللسان عن الغيبة والنميمة والكذب والفحش',
+      'فصل في حفظ القلب عن الحسد والغل والكبر والرياء والعجب',
+      'فصل في الإخلاص وصدق النية في جميع الأقوال والأعمال',
+      'فصل في الزهد في الدنيا وقصر الأمل ومحاسبة النفس',
+      'فصل في الصبر على البلاء والشكر على النعماء والرضا بالقضاء',
+      'فصل في التوكل على الله وحسن الظن به واليقين',
+      'فصل في الخوف والرجاء والمحبة لله ولرسوله',
+      'فصل في التوبة النصوح والاستغفار وشروط قبولها',
+      'فصل في الموت وأهوال القبر والبعث والنشور',
+      'فصل في الجنة ونعيمها والنار وعذابها ورؤية وجه الله الكريم',
+      'خاتمة الكتاب في الوصايا النافعة والدعوات الجامعة المباركة',
     ],
   },
   {
@@ -475,15 +561,15 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Syaikh Zainuddin bin Abdul Aziz Al-Malibari',
     keywords: ['fathul muin', 'fathul mu\'in', 'فتح المعين', 'قرة العين'],
     chapters: [
-      'Muqaddimah & Khutbatul Kitab (مقدمة الكتاب)',
-      'Bab I: Ash-Shalah / Fiqih Shalat (باب الصلاة)',
-      'Bab II: Az-Zakah / Kewajiban Zakat (باب الزكاة)',
-      'Bab III: Ash-Shaum / Fiqih Puasa (باب الصوم)',
-      'Bab IV: Al-Hajj / Ibadah Haji (باب الحج)',
-      'Bab V: Al-Buyu\' / Akad Muamalah & Jual Beli (باب البيع)',
-      'Bab VI: Al-Faraidh & Wasiat (باب الفرائض والوصايا)',
-      'Bab VII: An-Nikah / Hukum Keluarga (باب النكاح)',
-      'Bab VIII: Al-Jinayat, Hudud & Qadha (باب الجنايات والأقضية)',
+      'مقدمة الكتاب',
+      'باب الصلاة',
+      'باب الزكاة',
+      'باب الصوم',
+      'باب الحج',
+      'باب البيع والمعاملات',
+      'باب الفرائض والوصايا',
+      'باب النكاح',
+      'باب الجنايات والأقضية',
     ],
   },
   {
@@ -493,17 +579,17 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Syaikh Salim bin Sumair Al-Hadhrami',
     keywords: ['safinah', 'safinatun', 'سفينة', 'نجاة'],
     chapters: [
-      'Fashl: Rukun Islam & Rukun Iman (أركان الإسلام والإيمان)',
-      'Fashl: Tanda-tanda Baligh (علامات البلوغ)',
-      'Fashl: Thaharah, Istinja & Bersuci (أحكام الطهارة والاستنجاء)',
-      'Fashl: Fardhu Wudhu & Pembatalnya (فروض الوضوء ونواقضه)',
-      'Fashl: Mandi Wajib & Sebab-sebabnya (موجبات الغسل وفروضه)',
-      'Fashl: Tayammum & Syarat-syaratnya (شروط التيمم وأركانه)',
-      'Fashl: Macam-macam Najis & Penyuciannya (أنواع النجاسات)',
-      'Fashl: Shalat, Syarat Sah & Rukun-rukunnya (شروط الصلاة وأركانها)',
-      'Fashl: Sujud Sahwi & Shalat Berjamaah (سجود السهو وصلاة الجماعة)',
-      'Fashl: Pengurusan Jenazah (أحكام الجنائز)',
-      'Fashl: Puasa Ramadhan & Zakat Fitrah (أحكام الصيام والزكاة)',
+      'أركان الإسلام والإيمان',
+      'علامات البلوغ',
+      'أحكام الطهارة والاستنجاء',
+      'فروض الوضوء ونواقضه',
+      'موجبات الغسل وفروضه',
+      'شروط التيمم وأركانه',
+      'أنواع النجاسات',
+      'شروط الصلاة وأركانها',
+      'سجود السهو وصلاة الجماعة',
+      'أحكام الجنائز',
+      'أحكام الصيام والزكاة',
     ],
   },
   {
@@ -513,19 +599,19 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Ibnu Qasim Al-Ghazi / Abu Syuja\'',
     keywords: ['fathul qarib', 'qarib', 'taqrib', 'تقريب', 'قريب', 'غاية الاختصار'],
     chapters: [
-      'Kitab Thaharah / Bersuci (كتاب الطهارة)',
-      'Kitab Shalah / Shalat (كتاب الصلاة)',
-      'Kitab Zakah / Zakat (كتاب الزكاة)',
-      'Kitab Shiyam / Puasa (كتاب الصيام)',
-      'Kitab Hajj / Haji (كتاب الحج)',
-      'Kitab Buyu\' / Transaksi Jual Beli (كتاب البيوع)',
-      'Kitab Faraidh & Wasaya (كتاب الفرائض والوصايا)',
-      'Kitab Nikah / Pernikahan (كتاب النكاح)',
-      'Kitab Jinayat / Pidana (كتاب الجنايات)',
-      'Kitab Hudud / Batasan Hukum (كتاب الحدود)',
-      'Kitab Jihad fi Sabilillah (كتاب الجهاد)',
-      'Kitab Ayman & Nudzur (كتاب الأيمان والنذور)',
-      'Kitab Qadha & Syahadat (كتاب الأقضية والشهادات)',
+      'كتاب الطهارة',
+      'كتاب الصلاة',
+      'كتاب الزكاة',
+      'كتاب الصيام',
+      'كتاب الحج',
+      'كتاب البيوع',
+      'كتاب الفرائض والوصايا',
+      'كتاب النكاح',
+      'كتاب الجنايات',
+      'كتاب الحدود',
+      'كتاب الجهاد',
+      'كتاب الأيمان والنذور',
+      'كتاب الأقضية والشهادات',
     ],
   },
   {
@@ -535,12 +621,12 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Ibnu Ajurrum Ash-Shanhaji',
     keywords: ['jurumiy', 'jurmiyah', 'ajurrum', 'آجرومية', 'جرومية'],
     chapters: [
-      'Bab I: Al-Kalam & Unsur Kalimat (باب الكلام)',
-      'Bab II: Al-I\'rab & Tanda-Tandanya (باب الإعراب)',
-      'Bab III: Al-Af\'al / Macam Kata Kerja (باب الأفعال)',
-      'Bab IV: Marfu\'atil Asma\' / Isim yang Dirofa\'kan (باب مرفوعات الأسماء)',
-      'Bab V: Manshubatil Asma\' / Isim yang Dinashobkan (باب منصوبات الأسماء)',
-      'Bab VI: Makhfudhatil Asma\' / Isim yang Dijarkan (باب مخفوضات الأسماء)',
+      'باب الكلام',
+      'باب الإعراب وعلاماته',
+      'باب الأفعال',
+      'باب مرفوعات الأسماء',
+      'باب منصوبات الأسماء',
+      'باب مخفوضات الأسماء',
     ],
   },
   {
@@ -550,14 +636,14 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Syaikh Nawawi Al-Bantani',
     keywords: ['kasyifatus', 'kasyifah', 'كاشفة', 'السجا'],
     chapters: [
-      'Muqaddimah & Biografi Syaikh Salim (مقدمة الشارح)',
-      'Bab I: Rukun Islam & Ushul Aqidah (أركان الإسلام وأصول العقيدة)',
-      'Bab II: Thaharah, Istinja & Rahasia Wudhu (أحكام الطهارة وأسرار الوضوء)',
-      'Bab III: Mandi Janabah & Masail Tayammum (موجبات الغسل والتيمم)',
-      'Bab IV: Hadas, Najis & Adab Menghilangkannya (أحكام النجاسات وإزالتها)',
-      'Bab V: Syarat, Rukun & Sunnah Shalat (شروط الصلاة وأركانها وسننها)',
-      'Bab VI: Shalat Berjamaah, Qashar & Jamak (صلاة الجماعة والقصر والجمع)',
-      'Bab VII: Shalat Jenazah & Doa Penutup (أحكام الجنائز والخاتمة)',
+      'مقدمة الشارح',
+      'أركان الإسلام وأصول العقيدة',
+      'أحكام الطهارة وأسرار الوضوء',
+      'موجبات الغسل والتيمم',
+      'أحكام النجاسات وإزالتها',
+      'شروط الصلاة وأركانها وسننها',
+      'صلاة الجماعة والقصر والجمع',
+      'أحكام الجنائز والخاتمة',
     ],
   },
   {
@@ -567,15 +653,15 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Hujjatul Islam Imam Al-Ghazali',
     keywords: ['bidayah', 'bidayatul', 'بداية', 'الهداية'],
     chapters: [
-      'Muqaddimah & Niat Menuntut Ilmu (مقدمة الكتاب في طلب العلم)',
-      'Qism I: Adab Taat & Wirid Sehari-hari (القسم الأول في الطاعات)',
-      'Adab Bangun Tidur & Masuk Kamar Mandi (آداب الاستيقاظ ودخول الخلاء)',
-      'Adab Berwudhu & Shalat Subuh (آداب الوضوء والصلاة)',
-      'Adab Menjaga Waktu dari Fajar hingga Isya (ترتيب الأوقات والوظائف)',
-      'Qism II: Menjauhi Maksiat Anggota Tubuh (القسم الثاني في اجتناب المعاصي)',
-      'Menjaga Mata, Telinga, Lisan & Perut (حفظ العين والأذن واللسان والبطن)',
-      'Menjaga Kemaluan, Tangan, Kaki & Hati (حفظ الفرج واليدين والرجلين والقلب)',
-      'Qism III: Adab Pergaulan Bersama Makhluk (القسم الثالث في آداب الصحبة)',
+      'مقدمة الكتاب في طلب العلم',
+      'القسم الأول في الطاعات',
+      'آداب الاستيقاظ ودخول الخلاء',
+      'آداب الوضوء والصلاة',
+      'ترتيب الأوقات والوظائف',
+      'القسم الثاني في اجتناب المعاصي',
+      'حفظ العين والأذن واللسان والبطن',
+      'حفظ الفرج واليدين والرجلين والقلب',
+      'القسم الثالث في آداب الصحبة والمعاشرة',
     ],
   },
   {
@@ -585,15 +671,15 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Al-Imam Yahya bin Syaraf An-Nawawi',
     keywords: ['riyadh', 'riyadlus', 'الصالحين', 'رياض'],
     chapters: [
-      'Bab Ikhlas & Niat (باب الإخلاص وإحضار النية)',
-      'Bab Taubat & Istighfar (باب التوبة والاستغفار)',
-      'Bab Sabar & Ketabahan (باب الصبر)',
-      'Bab Shiddiq & Kejujuran (باب الصدق)',
-      'Bab Muraqabah & Taqwa (باب المراقبة والتقوى)',
-      'Bab Yakin & Tawakkal (باب اليقين والتوكل)',
-      'Bab Istiqamah & Amal Shalih (باب الاستقامة)',
-      'Bab Adab Bergaul & Amar Ma\'ruf (باب الأمر بالمعروف)',
-      'Bab Akhlaq, Dzikir & Doa (باب الأذكار والدعوات)',
+      'باب الإخلاص وإحضار النية',
+      'باب التوبة والاستغفار',
+      'باب الصبر',
+      'باب الصدق',
+      'باب المراقبة والتقوى',
+      'باب اليقين والتوكل',
+      'باب الاستقامة',
+      'باب الأمر بالمعروف والنهي عن المنكر',
+      'باب الأذكار والدعوات',
     ],
   },
   {
@@ -603,13 +689,13 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Al-Hafizh Ibnu Hajar Al-Asqalani',
     keywords: ['bulugh', 'maram', 'بلوغ', 'المرام'],
     chapters: [
-      'Kitab Thaharah (كتاب الطهارة)',
-      'Kitab Shalah (كتاب الصلاة)',
-      'Kitab Janaiz & Zakah (كتاب الجنائز والزكاة)',
-      'Kitab Shiyam & Hajj (كتاب الصيام والحج)',
-      'Kitab Buyu\' & Muamalah (كتاب البيوع)',
-      'Kitab Nikah & Jinayat (كتاب النكاح والجنايات)',
-      'Kitab Al-Jami\' / Akhlaq & Doa (كتاب الجامع)',
+      'كتاب الطهارة',
+      'كتاب الصلاة',
+      'كتاب الجنائز والزكاة',
+      'كتاب الصيام والحج',
+      'كتاب البيوع',
+      'كتاب النكاح والجنايات',
+      'كتاب الجامع في الآداب والأذكار',
     ],
   },
   {
@@ -619,13 +705,13 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Syaikh Az-Zarnuji',
     keywords: ['talim', 'ta\'lim', 'mutaallim', 'تعليم', 'المتعلم', 'zarnuji'],
     chapters: [
-      'Fashl: Hakikat Ilmu & Keutamaannya (ماهية العلم وفضله)',
-      'Fashl: Niat dalam Belajar (النية في حال التعلم)',
-      'Fashl: Memilih Guru & Teman (اختيار العلم والأستاذ والشريك)',
-      'Fashl: Menghormati Ilmu & Ahlinya (تعظيم العلم وأهله)',
-      'Fashl: Kesungguhan & Kontinuitas (الجد والمواظبة)',
-      'Fashl: Tawakkal & Waktu Belajar (التوكل ووقت التحصيل)',
-      'Fashl: Wara\' & Sebab Menghafal (الورع وأسباب الحفظ)',
+      'فصل في ماهية العلم وفضله',
+      'فصل في النية في حال التعلم',
+      'فصل في اختيار العلم والأستاذ والشريك',
+      'فصل في تعظيم العلم وأهله',
+      'فصل في الجد والمواظبة والهمة',
+      'فصل في التوكل ووقت التحصيل',
+      'فصل في الورع وأسباب الحفظ',
     ],
   },
   {
@@ -635,12 +721,12 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Syaikh Ibnu Atha\'illah As-Sakandari',
     keywords: ['hikam', 'athaillah', 'الحكم'],
     chapters: [
-      'Fashl I: Bersandar pada Karunia Allah (الاعتماد على فضل الله)',
-      'Fashl II: Tajrid & Asbab (التجريد والأسباب)',
-      'Fashl III: Cahaya Hati & Bashirah (نور البصيرة)',
-      'Fashl IV: Adab Menyikapi Ujian & Waktu (حقوق الأوقات)',
-      'Fashl V: Ikhlas & Rahasia Qalbu (إخلاص السرائر)',
-      'Fashl VI: Munajat & Penutup (المناجاة الإلهية)',
+      'الاعتماد على فضل الله',
+      'التجريد والأسباب',
+      'نور البصيرة واليقين',
+      'حقوق الأوقات والأحوال',
+      'إخلاص السرائر',
+      'المناجاة الإلهية',
     ],
   },
   {
@@ -650,11 +736,11 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Habib Abdullah bin Husain bin Thahir',
     keywords: ['sullam', 'taufiq', 'سلم التوفيق'],
     chapters: [
-      'Fashl I: Ushuluddin & Aqidah (أصول الدين والعقيدة)',
-      'Fashl II: Thaharah & Shalat (أحكام الطهارة والصلاة)',
-      'Fashl III: Zakat, Puasa & Haji (الزكاة والصيام والحج)',
-      'Fashl IV: Muamalah & Menjaga Hati (المعاملات ومعاصي القلب)',
-      'Fashl V: Menjaga Lisan & Anggota Tubuh (معاصي الجوارح واللسان)',
+      'أصول الدين والعقيدة',
+      'أحكام الطهارة والصلاة',
+      'الزكاة والصيام والحج',
+      'المعاملات ومعاصي القلب',
+      'معاصي الجوارح واللسان',
     ],
   },
   {
@@ -664,12 +750,12 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Al-Imam Ahmad bin Zain Al-Habsyi',
     keywords: ['jamiah', 'jami\'ah', 'جامعة', 'الرسالة الجامعة'],
     chapters: [
-      'Muqaddimah & Rukun Islam (مقدمة الكتاب وأركان الإسلام)',
-      'Fashl: Bersuci, Wudhu & Shalat (أحكام الطهارة والصلوات المفروضة)',
-      'Fashl: Hal-Hal Pembatal Shalat (مبطلات الصلاة ومفسداتها)',
-      'Fashl: Zakat, Puasa & Rukun Haji (الزكاة والصوم والحج)',
-      'Fashl: Maksiat Hati & Anggota Badan (معاصي القلب وسائر الجوارح)',
-      'Khatimah: Taubat & Istighfar (خاتمة في التوبة والاستغفار)',
+      'مقدمة الكتاب وأركان الإسلام',
+      'أحكام الطهارة والصلوات المفروضة',
+      'مبطلات الصلاة ومفسداتها',
+      'الزكاة والصوم والحج',
+      'معاصي القلب وسائر الجوارح',
+      'خاتمة في التوبة والاستغفار',
     ],
   },
   {
@@ -679,11 +765,11 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Syaikh Ahmad Al-Marzuqi Al-Maliki',
     keywords: ['aqidat', 'awam', 'عقيدة', 'العوام'],
     chapters: [
-      'Nadhom 01-15: Sifat Wajib, Mustahil & Jaiz bagi Allah',
-      'Nadhom 16-28: Sifat Para Rasul & Nama-Nama Nabi',
-      'Nadhom 29-38: Malaikat, Kitab Suci & Hari Akhir',
-      'Nadhom 39-50: Keluarga & Keturunan Nabi SAW',
-      'Nadhom 51-57: Isra\' Mi\'raj & Penutup Mandhumah',
+      'الصفات الواجبة والمستحيلة والجائزة لله تعالى',
+      'صفات الرسل وأسماء الأنبياء',
+      'الملائكة والكتب السماوية واليوم الآخر',
+      'آل البيت وذرية النبي صلى الله عليه وسلم',
+      'الإسراء والمعراج وخاتمة المنظومة',
     ],
   },
   {
@@ -693,14 +779,13 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Syaikh Syarafuddin Yahya Al-Imrithi',
     keywords: ['imrithi', 'imriti', 'عمريطي', 'العمريطي'],
     chapters: [
-      'Muqaddimah & Bab Al-Kalam (مقدمة ونظم باب الكلام)',
-      'Bab Al-I\'rab & Tanda-Tandanya (باب الإعراب وعلاماته)',
-      'Bab An-Nakirah wal Ma\'rifah (باب النكرة والمعرفة)',
-      'Bab Al-Af\'al / Kata Kerja (باب الأفعال)',
-      'Bab I\'rabil Af\'al (باب إعراب الأفعال)',
-      'Bab Marfu\'atil Asma\' (باب مرفوعات الأسماء)',
-      'Bab Manshubatil Asma\' (باب منصوبات الأسماء)',
-      'Bab Makhfudhatil Asma\' & Penutup (باب المخفوضات والخاتمة)',
+      'مقدمة ونظم باب الكلام',
+      'باب الإعراب وعلاماته',
+      'باب النكرة والمعرفة',
+      'باب الأفعال وإعرابها',
+      'باب مرفوعات الأسماء',
+      'باب منصوبات الأسماء',
+      'باب المخفوضات من الأسماء والخاتمة',
     ],
   },
   {
@@ -710,12 +795,12 @@ export const POPULAR_TURATS_TEMPLATES: TuratsKitabTemplate[] = [
     author: 'Syaikh Nawawi Al-Bantani',
     keywords: ['uqud', 'lujjain', 'عقود', 'اللجين'],
     chapters: [
-      'Muqaddimah & Hak Suami atas Istri (حقوق الزوج على الزوجة)',
-      'Fashl I: Keutamaan Istri yang Taat (فضيلة طاعة الزوج)',
-      'Fashl II: Hak Istri atas Suami (حقوق الزوجة على الزوج والنفقة)',
-      'Fashl III: Keutamaan Shalat di Rumah bagi Wanita (صلاة المرأة في بيتها)',
-      'Fashl IV: Larangan Memandang Non-Mahram (تحريم نظر الأجنبي والأجنبية)',
-      'Khatimah: Adab Rumah Tangga Islami (خاتمة في آداب المعاشرة)',
+      'حقوق الزوج على الزوجة',
+      'فضيلة طاعة الزوج والتحذير من عقوقه',
+      'حقوق الزوجة على الزوج والنفقة',
+      'صلاة المرأة في بيتها وحجابها',
+      'تحريم نظر الأجنبي والأجنبية',
+      'خاتمة في آداب المعاشرة الزوجية',
     ],
   },
 ];
@@ -754,7 +839,7 @@ export async function detectOrGenerateKitabChapters(
     // 3. Try scanning text on pages for Arabic & Latin headings
     try {
       const scannedChapters: KitabChapter[] = [];
-      const pagesToScan = Math.min(pdfDoc.numPages, 160);
+      const pagesToScan = Math.min(pdfDoc.numPages, 400);
 
       for (let i = 1; i <= pagesToScan; i++) {
         const page = await pdfDoc.getPage(i);
@@ -765,7 +850,7 @@ export async function detectOrGenerateKitabChapters(
           for (const item of items) {
             if ('str' in item && item.str.trim().length > 0) {
               const y = Math.round(item.transform[5]);
-              const existing = lineBuckets.find((b) => Math.abs(b.y - y) <= 5);
+              const existing = lineBuckets.find((b) => Math.abs(b.y - y) <= 6);
               if (existing) {
                 existing.text += (existing.text.endsWith(' ') ? '' : ' ') + item.str;
               } else {
@@ -779,26 +864,26 @@ export async function detectOrGenerateKitabChapters(
           for (const line of lines) {
             const cleanLine = stripArabicTashkeel(line.trim());
             const isArabicHeading =
-              /^(كتاب|الكتاب|باب|الباب|فصل|الفصل|مقدمة|المقدمة|خاتمة|الخاتمة|تنبيه|فائدة|فوائد|فرع|فروع|مسألة|مسائل|بحث|مطلب|مقصد|قاعدة|القاعدة)\s*(\S+|$)/i.test(cleanLine);
+              /^[\(\[\{]?(كتاب|الكتاب|باب|الباب|فصل|الفصل|مقدمة|المقدمة|خاتمة|الخاتمة|تنبيه|تنبيهات|فائدة|فوائد|فرع|فروع|مسألة|مسائل|بحث|مطلب|مطالب|مقصد|مقاصد|قاعدة|القاعدة|أصل|الأصل|مبحث|المبحث|قسم|القسم|ضابط|الضابط|نظم|المنظومة|شرح|بيان|القول في|تتمة|التتمة)\s*(\S+|$)/i.test(cleanLine);
             const isLatinHeading =
               /^(bab|fasal|fasl|pasal|bagian|juz|chapter|kitab|muqaddimah|khatimah|kaidah)\b/i.test(cleanLine);
 
             if ((isArabicHeading || isLatinHeading) && cleanLine.length >= 3 && cleanLine.length <= 110) {
-              if (!scannedChapters.some((c) => c.startPage === i || c.title === line.trim())) {
+              const pureTitle = extractArabicTitleOnly(line.trim());
+              if (pureTitle.length >= 2 && !scannedChapters.some((c) => c.startPage === i || c.title === pureTitle)) {
                 scannedChapters.push({
                   id: `ch-scan-${i}-${scannedChapters.length}`,
                   number: String(scannedChapters.length + 1).padStart(2, '0'),
-                  title: line.trim(),
+                  title: pureTitle,
                   startPage: i,
                 });
-                break;
               }
             }
           }
         }
       }
 
-      if (scannedChapters.length >= 2) {
+      if (scannedChapters.length >= 3) {
         scannedChapters.sort((a, b) => a.startPage - b.startPage);
         return scannedChapters.map((ch, idx) => ({
           ...ch,
@@ -816,7 +901,7 @@ export async function detectOrGenerateKitabChapters(
   for (const tpl of POPULAR_TURATS_TEMPLATES) {
     const matched = tpl.keywords.some((kw) => {
       const normKw = normalizeArabicTitle(kw);
-      return normTitle.includes(normKw);
+      return normTitle.includes(normKw) || normKw.includes(normTitle);
     });
 
     if (matched) {
@@ -831,21 +916,33 @@ export async function detectOrGenerateKitabChapters(
     }
   }
 
-  // 5. Default smart multi-chapter breakdown for ANY general or unlisted PDF
-  const cleanTitle = title.replace(/\.[a-zA-Z0-9]+$/, '').replace(/[-_]+/g, ' ').trim();
-  const numChapters = Math.min(8, Math.max(3, Math.ceil(totalPages / 15)));
+  // 5. Default smart multi-chapter breakdown in pure Arabic for ANY general or unlisted PDF
+  const numChapters = Math.min(10, Math.max(4, Math.ceil(totalPages / 12)));
   const step = Math.max(1, Math.floor(totalPages / numChapters));
+
+  const arabicOrdinals = [
+    'الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس',
+    'السادس', 'السابع', 'الثامن', 'التاسع', 'العاشر',
+    'الحادي عشر', 'الثاني عشر', 'الثالث عشر', 'الرابع عشر', 'الخامس عشر'
+  ];
+
   const generated: KitabChapter[] = [
-    { id: `gen-${cleanTitle.slice(0, 6)}-1`, number: '01', title: `Muqaddimah & Awal Naskah (${cleanTitle.slice(0, 30)})`, startPage: 1 }
+    {
+      id: `gen-${Date.now()}-1`,
+      number: '01',
+      title: 'مقدمة الكتاب وفاتحة النوازل',
+      startPage: 1
+    }
   ];
 
   for (let c = 2; c <= numChapters; c++) {
     const sPage = Math.min(totalPages, (c - 1) * step + 1);
     if (sPage > generated[generated.length - 1].startPage) {
+      const ordinal = arabicOrdinals[c - 1] || `${c}`;
       generated.push({
-        id: `gen-${cleanTitle.slice(0, 6)}-${c}`,
+        id: `gen-${Date.now()}-${c}`,
         number: String(c).padStart(2, '0'),
-        title: `Bagian ${String(c).padStart(2, '0')} · Halaman ${sPage}`,
+        title: `الفصل ${ordinal} · المبحث والمسائل`,
         startPage: sPage,
       });
     }

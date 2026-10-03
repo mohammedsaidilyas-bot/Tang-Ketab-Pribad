@@ -40,6 +40,7 @@ import {
   createPdfLoadingTask,
   globalPdfDocCache,
   getOrLoadPdfDoc,
+  extractArabicTitleOnly,
   POPULAR_TURATS_TEMPLATES,
 } from '../utils/pdfProcessor';
 
@@ -300,7 +301,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     if (kitab && onUpdateChapters) {
       const isMissingOrGeneric =
         !kitab.chapters ||
-        kitab.chapters.length <= 1 ||
+        kitab.chapters.length <= 20 ||
         kitab.chapters.some((c) =>
           c.title.toLowerCase().includes('fasal lanjutan') ||
           /fasal\s+\d+\s*·\s*halaman/i.test(c.title) ||
@@ -317,7 +318,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
           if (detected && detected.length > 0) {
             const isDifferent =
               !kitab.chapters ||
-              detected.length !== kitab.chapters.length ||
+              detected.length > kitab.chapters.length ||
               detected.some(
                 (ch, idx) =>
                   ch.title !== kitab.chapters[idx]?.title ||
@@ -636,8 +637,8 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       <div className={`p-4 sm:p-8 lg:p-12 h-full flex flex-col justify-between ${themeStyle.pageBg} ${themeStyle.pageText} select-none overflow-hidden text-left`}>
         <div>
           <header className={`flex items-center justify-between pb-3 mb-6 border-b ${themeStyle.border} text-xs ${themeStyle.mutedText}`}>
-            <span className="truncate max-w-[70%] font-sans tracking-wider uppercase">
-              {pageData.chapterTitle || kitab.title}
+            <span className="truncate max-w-[70%] font-arabic text-sm text-right font-medium">
+              {extractArabicTitleOnly(pageData.chapterTitle) || pageData.chapterTitle || kitab.title}
             </span>
             <span className="font-mono-tabular shrink-0">Hal. {pageData.pageNumber}</span>
           </header>
@@ -727,8 +728,8 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
           <header
             className={`flex items-center justify-between pb-3 mb-6 border-b ${themeStyle.border} text-xs ${themeStyle.mutedText}`}
           >
-            <span className="truncate max-w-[70%] font-sans tracking-wider uppercase">
-              {side === 'left' ? kitab.title : pageData.chapterTitle}
+            <span className="truncate max-w-[70%] font-arabic text-sm text-right font-medium">
+              {side === 'left' ? kitab.title : (extractArabicTitleOnly(pageData.chapterTitle) || pageData.chapterTitle)}
             </span>
             <div className="flex items-center gap-3 shrink-0">
               <button
@@ -1069,7 +1070,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
               </div>
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {kitab.chapters.map((ch) => {
               const isCurrentChapter =
                 currentPage >= ch.startPage &&
@@ -1077,6 +1078,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                   currentPage <
                     (kitab.chapters.find((next) => next.startPage > ch.startPage)?.startPage ||
                       9999));
+              const pureArabicTitle = extractArabicTitleOnly(ch.title);
               return (
                 <button
                   key={ch.id}
@@ -1085,17 +1087,23 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                     onPageChange(ch.startPage);
                     setShowTocDrawer(false);
                   }}
-                  className={`text-left p-3 border transition-colors ${
+                  className={`text-right p-3.5 border transition-colors flex flex-col justify-between ${
                     isCurrentChapter
-                      ? 'border-[#78350F] bg-[#78350F]/10'
+                      ? 'border-[#78350F] bg-[#78350F]/10 shadow-xs'
                       : 'border-[#D6CEBE] bg-white hover:border-[#78350F]'
                   }`}
+                  dir="rtl"
                 >
-                  <p className="text-xs font-mono-tabular text-[#78350F]">
-                    Bab {ch.number} · Mulai Hal. {ch.startPage}
-                  </p>
-                  <p className="text-sm font-medium text-[#1C1917] mt-1 line-clamp-1">
-                    {ch.title}
+                  <div className="flex items-center justify-between gap-2 mb-2 w-full text-xs text-[#78350F] font-mono-tabular" dir="ltr">
+                    <span className="font-semibold px-2 py-0.5 bg-[#78350F]/10 border border-[#78350F]/30 text-[11px]">
+                      ص {ch.startPage}
+                    </span>
+                    <span className="text-[11px] text-[#57534E]">
+                      {ch.number}
+                    </span>
+                  </div>
+                  <p className="text-base font-arabic font-medium text-[#1C1917] leading-relaxed text-right w-full" dir="rtl">
+                    {pureArabicTitle}
                   </p>
                 </button>
               );

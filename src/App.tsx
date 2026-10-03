@@ -25,6 +25,7 @@ import {
   detectOrGenerateKitabChapters,
   loadPdfArrayBuffer,
   createPdfLoadingTask,
+  extractArabicTitleOnly,
 } from './utils/pdfProcessor';
 import archivalDeskImg from './assets/images/tang_ketab_archival_desk_1791013805237.jpg';
 import kitabCoverImg from './assets/images/kitab_manuscript_cover_1791013815328.jpg';
@@ -1164,25 +1165,28 @@ export function App() {
                         </button>
                       </div>
                     ) : (
-                      catalogKitab.chapters.map((ch) => (
-                        <div
-                          key={ch.id}
-                          className="flex items-center justify-between py-2 px-3 bg-[#FBF9F5] border border-[#E2DCD0] text-xs"
-                        >
-                          <span className="font-medium text-[#1C1917]">
-                            {ch.number}. {ch.title}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleOpenKitabInReader(catalogKitab.id, ch.startPage)
-                            }
-                            className="font-mono-tabular text-[#78350F] hover:underline"
+                      catalogKitab.chapters.map((ch) => {
+                        const pureArabic = extractArabicTitleOnly(ch.title);
+                        return (
+                          <div
+                            key={ch.id}
+                            className="flex items-center justify-between py-2.5 px-3.5 bg-[#FBF9F5] border border-[#E2DCD0] text-xs"
                           >
-                            Buka Hal. {ch.startPage} →
-                          </button>
-                        </div>
-                      ))
+                            <span className="font-arabic font-medium text-[#1C1917] text-sm text-right flex-1" dir="rtl">
+                              {pureArabic}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOpenKitabInReader(catalogKitab.id, ch.startPage)
+                              }
+                              className="font-mono-tabular text-[#78350F] hover:underline shrink-0 ml-4 text-xs font-semibold"
+                            >
+                              ص {ch.startPage} →
+                            </button>
+                          </div>
+                        );
+                      })
                     )}
                   </div>
                 </div>
