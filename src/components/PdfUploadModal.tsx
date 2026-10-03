@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileText, X, BookOpen, CheckCircle2, Sparkles } from 'lucide-react';
+import { Upload, FileText, X, BookOpen, CheckCircle2, Sparkles, Lock } from 'lucide-react';
 import { KitabDocument } from '../types/kitab';
 import { convertPdfFileToKitab, createSampleKitabPdfFile } from '../utils/pdfProcessor';
 
@@ -19,6 +19,8 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
   const [customAuthor, setCustomAuthor] = useState('');
   const [customCategory, setCustomCategory] = useState('Maktabah Pribadi');
   const [coverTone, setCoverTone] = useState<KitabDocument['coverTone']>('bronze');
+  const [password, setPassword] = useState('');
+  const [requiresPassword, setRequiresPassword] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -28,6 +30,8 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
 
   const handleFileChange = (file: File | null) => {
     setErrorMsg(null);
+    setRequiresPassword(false);
+    setPassword('');
     if (!file) return;
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
       setErrorMsg('Mohon pilih berkas berformat .PDF untuk dikonversi menjadi PocketBook.');
@@ -64,17 +68,25 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
         customAuthor: customAuthor || 'Koleksi Tang Kitab',
         customCategory: customCategory || 'Kitab Pribadi',
         coverTone,
+        password: password.trim() || undefined,
         onProgress: (current, total) => setProgress({ current, total }),
       });
       setIsConverting(false);
       onKitabCreated(newKitab);
       onClose();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       setIsConverting(false);
-      setErrorMsg(
-        'Gagal mengonversi berkas PDF. Pastikan dokumen PDF tidak diproteksi kata sandi.'
-      );
+      if (err?.message === 'PDF_PASSWORD_REQUIRED') {
+        setRequiresPassword(true);
+        setErrorMsg(
+          'Berkas PDF ini terproteksi kata sandi. Masukkan kata sandi dokumen pada kolom di bawah lalu klik Buka kembali.'
+        );
+      } else {
+        setErrorMsg(
+          err?.message ? `Gagal memproses berkas PDF: ${err.message}` : 'Gagal memproses berkas PDF. Mohon periksa kembali berkas Anda.'
+        );
+      }
     }
   };
 
@@ -162,21 +174,12 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
             )}
           </div>
 
-          {/* Quick Demo PDF Generator */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-4 py-3 bg-[#F3EFE6] border border-[#E5DEC9]">
-            <div className="text-xs text-[#44403C]">
-              <span className="font-semibold text-[#1C1917]">Belum menyiapkan berkas PDF?</span>{' '}
-              Uji langsung konversi PDF ke PocketBook dengan berkas PDF contoh otomatis.
-            </div>
-            <button
-              type="button"
-              onClick={handleInstantSamplePdf}
-              disabled={isConverting}
-              className="px-3.5 py-2 text-xs font-medium text-[#78350F] border border-[#78350F]/40 bg-[#FBF9F5] hover:bg-[#78350F] hover:text-white transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              Buat & Masukkan PDF Contoh
-            </button>
+          {/* Format Compatibility Note */}
+          <div className="flex items-center gap-2.5 px-4 py-2.5 bg-[#F3EFE6] border border-[#E5DEC9] text-xs text-[#57534E]">
+            <CheckCircle2 className="w-4 h-4 text-[#14532D] shrink-0" />
+            <span>
+              Mendukung segala format dokumen PDF: pindaian kitab turats, manuskrip, dokumen A4/B5, buku terjemahan, dan berkas digital lainnya.
+            </span>
           </div>
 
           {/* Metadata Form */}
@@ -244,6 +247,38 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
               ))}
             </div>
           </div>
+
+          {/* Password field if PDF is protected */}
+          {requiresPassword && (
+            <div className="p-4 bg-[#FBF9F5] border-2 border-[#78350F] space-y-3">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#78350F]">
+                <Lock className="w-4 h-4" />
+                <span>Dokumen PDF Membutuhkan Kata Sandi Buka Dokumen</span>
+              </div>
+              <p className="text-xs text-[#57534E] leading-relaxed">
+                Jika berkas PDF Anda memang diberi kata sandi, silakan masukkan di bawah. Namun jika berkas sebenarnya tidak memiliki kata sandi (misalnya hasil scan atau dokumen publik), Anda dapat menekan tombol <strong>"Buka Tanpa Sandi"</strong> agar sistem membukanya secara langsung.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Ketik kata sandi PDF jika ada..."
+                  className="flex-1 px-3.5 py-2 text-sm bg-white border border-[#D6CEBE] text-[#1C1917] focus:outline-none focus:border-[#78350F]"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPassword('');
+                    handleProcessPdf();
+                  }}
+                  className="px-4 py-2 text-xs font-medium text-[#78350F] border border-[#78350F] bg-white hover:bg-[#78350F] hover:text-white transition-colors whitespace-nowrap"
+                >
+                  Buka Tanpa Sandi
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Progress or Error */}
           {isConverting && progress && (

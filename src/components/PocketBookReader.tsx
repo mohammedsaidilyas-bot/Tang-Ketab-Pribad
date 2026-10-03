@@ -36,6 +36,9 @@ import {
   renderPdfPageToCanvas,
   loadPdfArrayBuffer,
   extractChaptersFromPdfDoc,
+  detectOrGenerateKitabChapters,
+  createPdfLoadingTask,
+  POPULAR_TURATS_TEMPLATES,
 } from '../utils/pdfProcessor';
 
 interface PocketBookReaderProps {
@@ -216,7 +219,8 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       setPdfDoc(null);
       loadPdfArrayBuffer(kitab.pdfBlobKey).then((buffer) => {
         if (buffer) {
-          pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise.then((doc) => {
+          const loadingTask = createPdfLoadingTask(new Uint8Array(buffer));
+          loadingTask.promise.then((doc) => {
             setPdfDoc(doc);
           }).catch((err) => {
             console.error("Error loading PDF document:", err);
@@ -228,25 +232,52 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     }
   }, [kitab.pdfBlobKey, kitab.isUploadedPdf]);
 
-  // Automatically extract authentic PDF outline / bookmarks on load if available
+  // Automatically extract authentic PDF outline / bookmarks on load, or generate intelligent chapters for this specific book
   useEffect(() => {
-    if (pdfDoc && kitab.isUploadedPdf && onUpdateChapters) {
-      extractChaptersFromPdfDoc(pdfDoc).then((extracted) => {
-        if (extracted.length > 0) {
-          const isDifferent =
-            extracted.length !== kitab.chapters.length ||
-            extracted.some(
-              (ch, idx) =>
-                ch.title !== kitab.chapters[idx]?.title ||
-                ch.startPage !== kitab.chapters[idx]?.startPage
-            );
-          if (isDifferent) {
-            onUpdateChapters(kitab.id, extracted);
-          }
-        }
-      });
+    let isCancelled = false;
+
+    // For uploaded PDFs, wait until pdfDoc is fully loaded into memory
+    if (kitab.isUploadedPdf && !pdfDoc) {
+      return;
     }
-  }, [pdfDoc, kitab.id, kitab.isUploadedPdf]);
+
+    if (kitab && onUpdateChapters) {
+      const isMissingOrGeneric =
+        !kitab.chapters ||
+        kitab.chapters.length <= 1 ||
+        kitab.chapters.some((c) =>
+          c.title.toLowerCase().includes('fasal lanjutan') ||
+          /fasal\s+\d+\s*·\s*halaman/i.test(c.title) ||
+          /bagian\s+\d+\s*·\s*halaman/i.test(c.title) ||
+          /muqaddimah\s+&\s+lembar\s+awal\s+naskah/i.test(c.title) ||
+          (!kitab.title.toLowerCase().includes('fathul mu') &&
+           !kitab.title.includes('معين') &&
+           c.title.includes('Ash-Shalah / Fiqih Shalat'))
+        );
+
+      if (isMissingOrGeneric || pdfDoc) {
+        detectOrGenerateKitabChapters(pdfDoc, kitab.title, kitab.totalPages).then((detected) => {
+          if (isCancelled) return;
+          if (detected && detected.length > 0) {
+            const isDifferent =
+              detected.length !== kitab.chapters.length ||
+              detected.some(
+                (ch, idx) =>
+                  ch.title !== kitab.chapters[idx]?.title ||
+                  ch.startPage !== kitab.chapters[idx]?.startPage
+              );
+            if (isDifferent) {
+              onUpdateChapters(kitab.id, detected);
+            }
+          }
+        });
+      }
+    }
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [pdfDoc, kitab.id, kitab.title, kitab.totalPages, kitab.isUploadedPdf]);
 
   const handleOpenTocEditModal = () => {
     setEditingChapters([...kitab.chapters]);
@@ -256,14 +287,24 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   };
 
   const handleScanPdfOutline = async () => {
-    if (!pdfDoc) return;
     setIsScanningPdfToc(true);
     try {
-      const extracted = await extractChaptersFromPdfDoc(pdfDoc);
-      if (extracted.length > 0) {
-        setEditingChapters(extracted);
+      let docToUse = pdfDoc;
+      if (!docToUse && kitab.isUploadedPdf && kitab.pdfBlobKey) {
+        const buf = await loadPdfArrayBuffer(kitab.pdfBlobKey);
+        if (buf) {
+          docToUse = await createPdfLoadingTask(new Uint8Array(buf)).promise;
+          setPdfDoc(docToUse);
+        }
+      }
+      const detected = await detectOrGenerateKitabChapters(docToUse, kitab.title, kitab.totalPages);
+      if (detected && detected.length > 0) {
+        setEditingChapters(detected);
+        if (onUpdateChapters) {
+          onUpdateChapters(kitab.id, detected);
+        }
       } else {
-        alert('PDF ini tidak memiliki metadata Bookmark/Outline bawaan. Anda dapat memasukkan nama bab dan halaman secara manual di bawah.');
+        alert('Tidak ditemukan bab otomatis. Anda dapat memasukkan nama bab dan halaman secara manual di bawah.');
       }
     } finally {
       setIsScanningPdfToc(false);
@@ -923,7 +964,38 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                 {kitab.title}
               </h3>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={isScanningPdfToc}
+                onClick={async () => {
+                  setIsScanningPdfToc(true);
+                  try {
+                    let docToUse = pdfDoc;
+                    if (!docToUse && kitab.isUploadedPdf && kitab.pdfBlobKey) {
+                      const buf = await loadPdfArrayBuffer(kitab.pdfBlobKey);
+                      if (buf) {
+                        docToUse = await createPdfLoadingTask(new Uint8Array(buf)).promise;
+                        setPdfDoc(docToUse);
+                      }
+                    }
+                    const detected = await detectOrGenerateKitabChapters(docToUse, kitab.title, kitab.totalPages);
+                    if (detected && detected.length > 0 && onUpdateChapters) {
+                      onUpdateChapters(kitab.id, detected);
+                      setTocUpdateSuccessToast(true);
+                      setTimeout(() => setTocUpdateSuccessToast(false), 2200);
+                    }
+                  } finally {
+                    setIsScanningPdfToc(false);
+                  }
+                }}
+                className="px-3 py-1.5 text-xs font-medium bg-[#F7F4EE] border border-[#78350F] text-[#78350F] hover:bg-[#78350F] hover:text-white transition-colors flex items-center gap-1.5 shadow-xs"
+                title="Pindai dan baca otomatis daftar isi / fihris dari berkas PDF ini"
+              >
+                <RotateCw className={`w-3.5 h-3.5 ${isScanningPdfToc ? 'animate-spin' : ''}`} />
+                <span>{isScanningPdfToc ? 'Memindai PDF...' : 'Pindai Otomatis Fihris PDF'}</span>
+              </button>
+
               {onUpdateChapters && (
                 <button
                   type="button"
@@ -931,11 +1003,11 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                   className="px-3 py-1.5 text-xs font-medium bg-[#78350F] text-white hover:bg-[#5C280B] transition-colors flex items-center gap-1.5 shadow-xs"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
-                  <span>Kelola / Edit Daftar Isi</span>
+                  <span>Kelola / Edit</span>
                 </button>
               )}
               <div className="text-xs text-[#57534E] font-mono-tabular hidden sm:block">
-                 Penanda aktif: {kitab.bookmarks.length > 0 ? kitab.bookmarks.map((b) => `Hal. ${b}`).join(', ') : 'Belum ada'}
+                 Penanda: {kitab.bookmarks.length > 0 ? kitab.bookmarks.map((b) => `Hal. ${b}`).join(', ') : 'Belum ada'}
               </div>
             </div>
           </div>

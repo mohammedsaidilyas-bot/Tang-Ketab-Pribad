@@ -9,7 +9,9 @@ import {
   Check,
   Sparkles,
   ArrowRight,
+  RotateCw,
 } from 'lucide-react';
+import * as pdfjsLib from 'pdfjs-dist';
 import {
   HasyiyahNote,
   KitabDocument,
@@ -19,7 +21,11 @@ import {
 import { DEFAULT_KITABS, DEFAULT_NOTES } from './data/defaultKitabs';
 import { PocketBookReader } from './components/PocketBookReader';
 import { PdfUploadModal } from './components/PdfUploadModal';
-import { convertPdfFileToKitab, createSampleKitabPdfFile } from './utils/pdfProcessor';
+import {
+  detectOrGenerateKitabChapters,
+  loadPdfArrayBuffer,
+  createPdfLoadingTask,
+} from './utils/pdfProcessor';
 import archivalDeskImg from './assets/images/tang_ketab_archival_desk_1791013805237.jpg';
 import kitabCoverImg from './assets/images/kitab_manuscript_cover_1791013815328.jpg';
 
@@ -71,12 +77,15 @@ export function App() {
       const saved = localStorage.getItem(STORAGE_KEY_KITABS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          // Strictly keep only PDF books uploaded by the user
+          return parsed.filter((k: any) => Boolean(k.isUploadedPdf));
+        }
       }
     } catch {
       // ignore storage errors
     }
-    return DEFAULT_KITABS;
+    return [];
   });
 
   const [notes, setNotes] = useState<HasyiyahNote[]>(() => {
@@ -84,12 +93,14 @@ export function App() {
       const saved = localStorage.getItem(STORAGE_KEY_NOTES);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((n: any) => !n.id.startsWith('note-default-'));
+        }
       }
     } catch {
       // ignore
     }
-    return DEFAULT_NOTES;
+    return [];
   });
 
   const [settings, setSettings] = useState<ReaderSettings>(() => {
@@ -112,8 +123,8 @@ export function App() {
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('pustaka');
-  const [activeKitabId, setActiveKitabId] = useState<string>(kitabs[0]?.id || 'tang-ketab-induk-01');
-  const [catalogKitabId, setCatalogKitabId] = useState<string>(kitabs[0]?.id || 'tang-ketab-induk-01');
+  const [activeKitabId, setActiveKitabId] = useState<string>(kitabs[0]?.id || '');
+  const [catalogKitabId, setCatalogKitabId] = useState<string>(kitabs[0]?.id || '');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
   // Library Filter & Search states
@@ -121,7 +132,32 @@ export function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [noteCategoryFilter, setNoteCategoryFilter] = useState<'all' | NoteCategory>('all');
   const [copiedSummary, setCopiedSummary] = useState(false);
-  const [isGeneratingQuickPdf, setIsGeneratingQuickPdf] = useState(false);
+  const [isScanningCatalogToc, setIsScanningCatalogToc] = useState(false);
+
+  // One-time cleanup to ensure all legacy default non-uploaded books are permanently purged
+  useEffect(() => {
+    setKitabs((prev) => {
+      const uploadedOnly = prev.filter((k) => Boolean(k.isUploadedPdf));
+      if (uploadedOnly.length !== prev.length) {
+        try {
+          localStorage.setItem(STORAGE_KEY_KITABS, JSON.stringify(uploadedOnly));
+        } catch {}
+        return uploadedOnly;
+      }
+      return prev;
+    });
+
+    setNotes((prev) => {
+      const cleanNotes = prev.filter((n) => !n.id.startsWith('note-default-'));
+      if (cleanNotes.length !== prev.length) {
+        try {
+          localStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(cleanNotes));
+        } catch {}
+        return cleanNotes;
+      }
+      return prev;
+    });
+  }, []);
 
   useEffect(() => {
     try {
@@ -147,11 +183,72 @@ export function App() {
     }
   }, [settings]);
 
-  const activeKitab = kitabs.find((k) => k.id === activeKitabId) || kitabs[0];
-  const catalogKitab = kitabs.find((k) => k.id === catalogKitabId) || kitabs[0];
+  // Keep activeKitabId aligned with kitabs list
+  useEffect(() => {
+    if (kitabs.length > 0) {
+      if (!kitabs.some((k) => k.id === activeKitabId)) {
+        setActiveKitabId(kitabs[0].id);
+        setCatalogKitabId(kitabs[0].id);
+      }
+    } else {
+      setActiveKitabId('');
+      setCatalogKitabId('');
+    }
+  }, [kitabs, activeKitabId]);
+
+  // Always keep catalogKitabId aligned with the currently active book
+  useEffect(() => {
+    if (activeKitabId) {
+      setCatalogKitabId(activeKitabId);
+    }
+  }, [activeKitabId]);
+
+  // Auto-enrich any kitabs with missing, generic, or misassigned chapters
+  useEffect(() => {
+    kitabs.forEach(async (k) => {
+      const isMissingOrGeneric =
+        !k.chapters ||
+        k.chapters.length <= 1 ||
+        k.chapters.some(
+          (c) =>
+            c.title.toLowerCase().includes('fasal lanjutan') ||
+            /fasal\s+\d+\s*·\s*halaman/i.test(c.title) ||
+            /bagian\s+\d+\s*·\s*halaman/i.test(c.title) ||
+            /muqaddimah\s+&\s+lembar\s+awal\s+naskah/i.test(c.title) ||
+            (!k.title.toLowerCase().includes('fathul mu') &&
+             !k.title.includes('معين') &&
+             c.title.includes('Ash-Shalah / Fiqih Shalat'))
+        );
+
+      if (isMissingOrGeneric) {
+        let loadedDoc: any = null;
+        if (k.isUploadedPdf && k.pdfBlobKey) {
+          try {
+            const buf = await loadPdfArrayBuffer(k.pdfBlobKey);
+            if (buf) {
+              loadedDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+            }
+          } catch (e) {
+            console.warn('Could not load PDF buffer for chapter auto-enrich:', e);
+          }
+        }
+
+        const detected = await detectOrGenerateKitabChapters(loadedDoc, k.title, k.totalPages);
+        if (detected && detected.length > 0) {
+          setKitabs((prev) =>
+            prev.map((item) => (item.id === k.id ? { ...item, chapters: detected } : item))
+          );
+        }
+      }
+    });
+  }, [kitabs.length]);
+
+  const activeKitab = kitabs.find((k) => k.id === activeKitabId) || kitabs[0] || null;
+  const catalogKitab = kitabs.find((k) => k.id === catalogKitabId) || activeKitab || null;
 
   const handleOpenKitabInReader = (kitabId: string, targetPage?: number) => {
     setActiveKitabId(kitabId);
+    setCatalogKitabId(kitabId);
     if (targetPage !== undefined) {
       setKitabs((prev) =>
         prev.map((k) => (k.id === kitabId ? { ...k, lastReadPage: targetPage } : k))
@@ -162,6 +259,7 @@ export function App() {
   };
 
   const handlePageChange = (newPage: number) => {
+    if (!activeKitab) return;
     setKitabs((prev) =>
       prev.map((k) =>
         k.id === activeKitab.id
@@ -178,6 +276,7 @@ export function App() {
   };
 
   const handleToggleBookmark = (pageNumber: number) => {
+    if (!activeKitab) return;
     setKitabs((prev) =>
       prev.map((k) => {
         if (k.id !== activeKitab.id) return k;
@@ -222,30 +321,14 @@ export function App() {
   };
 
   const handleDeleteKitab = (kitabId: string) => {
-    if (kitabs.length <= 1) return;
     const filtered = kitabs.filter((k) => k.id !== kitabId);
     setKitabs(filtered);
+    setNotes((prev) => prev.filter((n) => n.kitabId !== kitabId));
     if (activeKitabId === kitabId) {
-      setActiveKitabId(filtered[0].id);
+      setActiveKitabId(filtered[0]?.id || '');
     }
     if (catalogKitabId === kitabId) {
-      setCatalogKitabId(filtered[0].id);
-    }
-  };
-
-  const handleQuickDemoPdfConversion = async () => {
-    setIsGeneratingQuickPdf(true);
-    try {
-      const samplePdf = createSampleKitabPdfFile();
-      const converted = await convertPdfFileToKitab(samplePdf, {
-        customTitle: 'Tang Kitab: Risalah PDF Terkonversi (Edisi Saku)',
-        customAuthor: 'Maktabah Pribadi Tang Kitab',
-        customCategory: 'Maktabah PDF',
-        coverTone: 'terracotta',
-      });
-      handleKitabCreated(converted);
-    } finally {
-      setIsGeneratingQuickPdf(false);
+      setCatalogKitabId(filtered[0]?.id || '');
     }
   };
 
@@ -336,7 +419,10 @@ export function App() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab('katalog')}
+            onClick={() => {
+              setCatalogKitabId(activeKitabId);
+              setActiveTab('katalog');
+            }}
             className={`py-1 transition-colors whitespace-nowrap ${
               activeTab === 'katalog'
                 ? 'text-[#1C1917] border-b-2 border-[#78350F] font-semibold'
@@ -391,7 +477,10 @@ export function App() {
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('katalog')}
+          onClick={() => {
+            setCatalogKitabId(activeKitabId);
+            setActiveTab('katalog');
+          }}
           className={`px-2.5 py-1 whitespace-nowrap ${
             activeTab === 'katalog' ? 'font-semibold text-[#78350F] underline' : 'text-[#57534E]'
           }`}
@@ -420,22 +509,22 @@ export function App() {
               </div>
             </div>
 
-            <section className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
-              <div className="lg:col-span-7 flex flex-col justify-between p-6 sm:p-10 bg-[#F7F4EE] border border-[#D6CEBE]">
-                <div className="space-y-4">
-                  <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
-                    Naskah Induk & Konversi PDF PocketBook
-                  </p>
-                  <h1 className="text-3xl sm:text-5xl font-display font-semibold text-[#1C1917] leading-[1.12] text-balance">
-                    Ubah Berkas PDF Kitab Pribadi Menjadi Buku Saku PocketBook.
-                  </h1>
-                  <p className="text-base text-[#44403C] leading-relaxed max-w-[64ch]">
-                    Masukkan dokumen PDF kitab koleksi Anda ke dalam <strong>Tang Ketab Pocket</strong>. Halaman PDF Anda akan langsung disajikan dalam bentuk lembaran halaman asli beresolusi tinggi di dalam pembaca PocketBook, lengkap dengan pilihan kertas kuning turats, lembaran ganda dua halaman, pita pembatas, serta catatan pinggir (<em>hasyiyah</em>).
-                  </p>
-                </div>
+            {activeKitab ? (
+              <section className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
+                <div className="lg:col-span-7 flex flex-col justify-between p-6 sm:p-10 bg-[#F7F4EE] border border-[#D6CEBE]">
+                  <div className="space-y-4">
+                    <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
+                      Naskah Induk & Pembaca PDF PocketBook
+                    </p>
+                    <h1 className="text-3xl sm:text-5xl font-display font-semibold text-[#1C1917] leading-[1.12] text-balance">
+                      {activeKitab.title}
+                    </h1>
+                    <p className="text-base text-[#44403C] leading-relaxed max-w-[64ch]">
+                      {activeKitab.subtitle || 'Dokumen PDF pribadi Anda yang disajikan rapi dalam format lembaran buku saku PocketBook.'}
+                    </p>
+                  </div>
 
-                <div className="pt-8 mt-8 border-t border-[#E2DCD0] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="pt-8 mt-8 border-t border-[#E2DCD0] flex flex-wrap items-center gap-3">
                     <button
                       type="button"
                       onClick={() => handleOpenKitabInReader(activeKitab.id)}
@@ -443,7 +532,7 @@ export function App() {
                     >
                       <BookOpen className="w-4 h-4" />
                       <span>
-                        Lanjutkan Membaca: {activeKitab.title.split(':')[0]} (Hal. {activeKitab.lastReadPage})
+                        Lanjutkan Membaca: {activeKitab.title.split(':')[0]} (Hal. {activeKitab.lastReadPage} / {activeKitab.totalPages})
                       </span>
                     </button>
 
@@ -456,49 +545,60 @@ export function App() {
                       <span>Unggah PDF Kitab Baru</span>
                     </button>
                   </div>
-
-                  <button
-                    type="button"
-                    disabled={isGeneratingQuickPdf}
-                    onClick={handleQuickDemoPdfConversion}
-                    className="text-xs text-[#57534E] hover:text-[#78350F] underline text-left sm:text-right whitespace-nowrap flex items-center gap-1"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-[#78350F] shrink-0" />
-                    <span>
-                      {isGeneratingQuickPdf
-                        ? 'Menyusun PDF contoh...'
-                        : 'Coba simulasi konversi PDF instan'}
-                    </span>
-                  </button>
                 </div>
-              </div>
 
-              <div className="lg:col-span-5 relative min-h-[340px] border border-[#D6CEBE] bg-[#1C1917] overflow-hidden flex flex-col justify-end">
-                <img
-                  src={archivalDeskImg}
-                  alt="Meja baca kitab klasik Tang Ketab dengan pencahayaan alami"
-                  referrerPolicy="no-referrer"
-                  className="absolute inset-0 w-full h-full object-cover opacity-85"
-                />
-                <div className="relative z-10 p-6 sm:p-8 bg-gradient-to-t from-black/90 via-black/55 to-transparent text-[#FBF9F5] space-y-2">
-                  <div className="flex items-center gap-2 text-xs text-[#D6CEBE] font-mono-tabular">
-                    <span>{activeKitab.catalogNumber}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{activeKitab.category}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>
-                      Hal. {activeKitab.lastReadPage} / {activeKitab.totalPages}
-                    </span>
+                <div className="lg:col-span-5 relative min-h-[340px] border border-[#D6CEBE] bg-[#1C1917] overflow-hidden flex flex-col justify-end">
+                  <img
+                    src={archivalDeskImg}
+                    alt="Meja baca kitab klasik Tang Ketab dengan pencahayaan alami"
+                    referrerPolicy="no-referrer"
+                    className="absolute inset-0 w-full h-full object-cover opacity-85"
+                  />
+                  <div className="relative z-10 p-6 sm:p-8 bg-gradient-to-t from-black/90 via-black/55 to-transparent text-[#FBF9F5] space-y-2">
+                    <div className="flex items-center gap-2 text-xs text-[#D6CEBE] font-mono-tabular">
+                      <span>{activeKitab.catalogNumber}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{activeKitab.category}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        Hal. {activeKitab.lastReadPage} / {activeKitab.totalPages}
+                      </span>
+                    </div>
+                    <h2 className="text-2xl font-display font-semibold text-white text-balance">
+                      {activeKitab.title}
+                    </h2>
+                    <p className="text-xs text-[#E7E2DA] line-clamp-2">
+                      {activeKitab.subtitle}
+                    </p>
                   </div>
-                  <h2 className="text-2xl font-display font-semibold text-white text-balance">
-                    {activeKitab.title}
-                  </h2>
-                  <p className="text-xs text-[#E7E2DA] line-clamp-2">
-                    {activeKitab.subtitle}
+                </div>
+              </section>
+            ) : (
+              <section className="p-8 sm:p-12 bg-[#F7F4EE] border border-[#D6CEBE] text-center max-w-2xl mx-auto space-y-5">
+                <div className="w-14 h-14 mx-auto rounded-full bg-[#78350F]/10 flex items-center justify-center text-[#78350F]">
+                  <BookOpen className="w-7 h-7" />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
+                    Maktabah Pribadi Bersih & Siap Digunakan
+                  </p>
+                  <h1 className="text-2xl sm:text-4xl font-display font-semibold text-[#1C1917]">
+                    Koleksi Khusus Kitab PDF Anda
+                  </h1>
+                  <p className="text-sm text-[#57534E] leading-relaxed max-w-lg mx-auto">
+                    Hanya kitab PDF yang Anda unggah yang akan disimpan dan ditampilkan di sini. Tidak ada kitab bawaan atau contoh yang tercampur.
                   </p>
                 </div>
-              </div>
-            </section>
+                <button
+                  type="button"
+                  onClick={() => setIsUploadModalOpen(true)}
+                  className="px-6 py-3.5 text-xs font-semibold text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors inline-flex items-center gap-2 shadow-xs"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Unggah Berkas PDF Kitab Sekarang</span>
+                </button>
+              </section>
+            )}
 
             <section className="space-y-6">
               <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[#D6CEBE]">
@@ -669,7 +769,7 @@ export function App() {
                             Rincian Katalog
                           </button>
 
-                          {item.isUploadedPdf && kitabs.length > 1 && (
+                          {item.isUploadedPdf && (
                             <button
                               type="button"
                               onClick={() => handleDeleteKitab(item.id)}
@@ -705,22 +805,54 @@ export function App() {
           </div>
         )}
 
-        {activeTab === 'reader' && activeKitab && (
-          <PocketBookReader
-            kitab={activeKitab}
-            notes={notes}
-            settings={settings}
-            onUpdateSettings={(partial) =>
-              setSettings((prev) => ({ ...prev, ...partial }))
-            }
-            onPageChange={handlePageChange}
-            onUpdateChapters={handleUpdateChapters}
-            onToggleBookmark={handleToggleBookmark}
-            onAddNote={handleAddNote}
-            onDeleteNote={handleDeleteNote}
-            onOpenUploadModal={() => setIsUploadModalOpen(true)}
-            onBackToLibrary={() => setActiveTab('pustaka')}
-          />
+        {activeTab === 'reader' && (
+          activeKitab ? (
+            <PocketBookReader
+              key={activeKitab.id}
+              kitab={activeKitab}
+              notes={notes}
+              settings={settings}
+              onUpdateSettings={(partial) =>
+                setSettings((prev) => ({ ...prev, ...partial }))
+              }
+              onPageChange={handlePageChange}
+              onUpdateChapters={handleUpdateChapters}
+              onToggleBookmark={handleToggleBookmark}
+              onAddNote={handleAddNote}
+              onDeleteNote={handleDeleteNote}
+              onOpenUploadModal={() => setIsUploadModalOpen(true)}
+              onBackToLibrary={() => setActiveTab('pustaka')}
+            />
+          ) : (
+            <div className="max-w-xl mx-auto px-4 py-20 text-center space-y-5">
+              <div className="w-14 h-14 mx-auto rounded-full bg-[#78350F]/10 flex items-center justify-center text-[#78350F]">
+                <BookOpen className="w-7 h-7" />
+              </div>
+              <h2 className="text-2xl font-display font-semibold text-[#1C1917]">
+                Belum Ada Kitab yang Terpilih
+              </h2>
+              <p className="text-sm text-[#57534E] leading-relaxed">
+                Silakan unggah berkas PDF kitab Anda untuk langsung membaca dalam format PocketBook dengan lembaran ganda dan tampilan kertas klasik turats.
+              </p>
+              <div className="flex justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsUploadModalOpen(true)}
+                  className="px-5 py-2.5 text-xs font-semibold text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors flex items-center gap-2 shadow-xs"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Unggah Berkas PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pustaka')}
+                  className="px-5 py-2.5 text-xs font-medium border border-[#D6CEBE] bg-[#F7F4EE] hover:bg-[#EBE6DF] text-[#1C1917]"
+                >
+                  Kembali ke Maktabah
+                </button>
+              </div>
+            </div>
+          )
         )}
 
         {activeTab === 'hasyiyah' && (
@@ -846,33 +978,42 @@ export function App() {
           </div>
         )}
 
-        {activeTab === 'katalog' && catalogKitab && (
-          <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8 space-y-8">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-5 border-b border-[#D6CEBE]">
-              <div>
-                <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
-                  Lembar Katalog & Identitas Filologi
-                </p>
-                <h1 className="text-3xl sm:text-4xl font-display font-semibold text-[#1C1917] mt-1">
-                  Arsip Katalog Tang Ketab
-                </h1>
-              </div>
+        {activeTab === 'katalog' && (
+          catalogKitab ? (
+            <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8 space-y-8">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-5 border-b border-[#D6CEBE]">
+                <div>
+                  <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
+                    Lembar Katalog & Identitas Filologi
+                  </p>
+                  <h1 className="text-3xl sm:text-4xl font-display font-semibold text-[#1C1917] mt-1">
+                    Arsip Katalog Tang Ketab
+                  </h1>
+                </div>
 
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-[#57534E]">Pilih Kitab:</label>
-                <select
-                  value={catalogKitab.id}
-                  onChange={(e) => setCatalogKitabId(e.target.value)}
-                  className="px-3 py-2 text-xs bg-white border border-[#D6CEBE] text-[#1C1917] focus:outline-none focus:border-[#78350F]"
-                >
-                  {kitabs.map((k) => (
-                    <option key={k.id} value={k.id}>
-                      {k.catalogNumber} — {k.title}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex flex-wrap items-center gap-3">
+                  {catalogKitab.id === activeKitab?.id && (
+                    <span className="px-2.5 py-1 text-xs bg-[#78350F]/10 text-[#78350F] font-semibold border border-[#78350F]/30 flex items-center gap-1.5 shadow-xs">
+                      <span className="w-2 h-2 rounded-full bg-[#78350F] animate-pulse" />
+                      Naskah yang Sedang Dibuka Saat Ini
+                    </span>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-[#57534E]">Pilih Kitab:</label>
+                    <select
+                      value={catalogKitab.id}
+                      onChange={(e) => setCatalogKitabId(e.target.value)}
+                      className="px-3 py-2 text-xs bg-white border border-[#D6CEBE] text-[#1C1917] focus:outline-none focus:border-[#78350F]"
+                    >
+                      {kitabs.map((k) => (
+                        <option key={k.id} value={k.id}>
+                          {k.catalogNumber} — {k.title} {k.id === activeKitab?.id ? '(Sedang Dibuka)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
-            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
               <div className="lg:col-span-5 p-8 bg-[#F7F4EE] border border-[#D6CEBE] flex flex-col items-center text-center space-y-5">
@@ -973,35 +1114,102 @@ export function App() {
                 </dl>
 
                 <div className="pt-4 border-t border-[#D6CEBE]">
-                  <h3 className="text-xs uppercase tracking-widest text-[#78350F] font-sans mb-3">
-                    Struktur Bab & Fihris Halaman
-                  </h3>
-                  <div className="space-y-2">
-                    {catalogKitab.chapters.map((ch) => (
-                      <div
-                        key={ch.id}
-                        className="flex items-center justify-between py-2 px-3 bg-[#FBF9F5] border border-[#E2DCD0] text-xs"
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <h3 className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
+                      Struktur Bab & Fihris Halaman ({catalogKitab.chapters.length} Bab)
+                    </h3>
+                    {catalogKitab.isUploadedPdf && catalogKitab.pdfBlobKey && (
+                      <button
+                        type="button"
+                        disabled={isScanningCatalogToc}
+                        onClick={async () => {
+                          setIsScanningCatalogToc(true);
+                          try {
+                            const buf = await loadPdfArrayBuffer(catalogKitab.pdfBlobKey!);
+                            if (buf) {
+                              const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+                              const detected = await detectOrGenerateKitabChapters(
+                                doc,
+                                catalogKitab.title,
+                                catalogKitab.totalPages
+                              );
+                              if (detected && detected.length > 0) {
+                                handleUpdateChapters(catalogKitab.id, detected);
+                              }
+                            }
+                          } catch (err) {
+                            console.error('Error scanning PDF chapters in catalog:', err);
+                          } finally {
+                            setIsScanningCatalogToc(false);
+                          }
+                        }}
+                        className="px-2.5 py-1 text-xs font-medium text-[#78350F] bg-[#F3EFE6] border border-[#78350F]/40 hover:bg-[#78350F] hover:text-white transition-colors flex items-center gap-1.5 shadow-2xs"
+                        title="Pindai ulang dan ekstrak daftar isi langsung dari PDF kitab ini"
                       >
-                        <span className="font-medium text-[#1C1917]">
-                          {ch.number}. {ch.title}
-                        </span>
+                        <RotateCw className={`w-3 h-3 ${isScanningCatalogToc ? 'animate-spin' : ''}`} />
+                        <span>{isScanningCatalogToc ? 'Memindai PDF...' : 'Pindai Otomatis Fihris PDF Ini'}</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {catalogKitab.chapters.length === 0 ? (
+                      <div className="p-4 text-center bg-[#FBF9F5] border border-[#E2DCD0] text-xs text-[#57534E]">
+                        <p>Bab belum terdaftar untuk kitab ini.</p>
                         <button
                           type="button"
-                          onClick={() =>
-                            handleOpenKitabInReader(catalogKitab.id, ch.startPage)
-                          }
-                          className="font-mono-tabular text-[#78350F] hover:underline"
+                          onClick={() => handleOpenKitabInReader(catalogKitab.id)}
+                          className="mt-2 text-xs font-semibold text-[#78350F] hover:underline inline-block"
                         >
-                          Buka Hal. {ch.startPage} →
+                          Buka di Meja Baca untuk Deteksi Bab Otomatis →
                         </button>
                       </div>
-                    ))}
+                    ) : (
+                      catalogKitab.chapters.map((ch) => (
+                        <div
+                          key={ch.id}
+                          className="flex items-center justify-between py-2 px-3 bg-[#FBF9F5] border border-[#E2DCD0] text-xs"
+                        >
+                          <span className="font-medium text-[#1C1917]">
+                            {ch.number}. {ch.title}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleOpenKitabInReader(catalogKitab.id, ch.startPage)
+                            }
+                            className="font-mono-tabular text-[#78350F] hover:underline"
+                          >
+                            Buka Hal. {ch.startPage} →
+                          </button>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>
             </div>
           </div>
-        )}
+        ) : (
+          <div className="max-w-xl mx-auto px-4 py-20 text-center space-y-5">
+            <div className="w-14 h-14 mx-auto rounded-full bg-[#78350F]/10 flex items-center justify-center text-[#78350F]">
+              <BookOpen className="w-7 h-7" />
+            </div>
+            <h2 className="text-2xl font-display font-semibold text-[#1C1917]">
+              Katalog Naskah Masih Kosong
+            </h2>
+            <p className="text-sm text-[#57534E]">
+              Setelah Anda mengunggah naskah PDF kitab, struktur bab, fihris halaman, dan identitas filologi akan ditampilkan di sini.
+            </p>
+            <button
+              type="button"
+              onClick={() => setIsUploadModalOpen(true)}
+              className="px-5 py-2.5 text-xs font-semibold text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors inline-flex items-center gap-2 shadow-xs"
+            >
+              <Upload className="w-4 h-4" />
+              <span>Unggah Berkas PDF Sekarang</span>
+            </button>
+          </div>
+        ))}
       </main>
 
       <footer className="mt-16 border-t border-[#D6CEBE] bg-[#F7F4EE] py-6 px-4 sm:px-8">
