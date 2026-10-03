@@ -1,0 +1,172 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Cormorant Garamond', Georgia, serif;
+    --font-serif: 'Lora', Georgia, serif;
+    --font-arabic: 'Amiri', 'Traditional Arabic', serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-serif);
+    background-color: #FBF9F5;
+    color: #1C1917;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-arabic {
+    font-family: var(--font-arabic);
+  }
+
+  .font-mono-tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Subtle paper texture and book spine shading */
+.pocketbook-spine-left {
+  background: linear-gradient(90deg, rgba(28, 25, 23, 0.03) 0%, rgba(28, 25, 23, 0) 8%, rgba(28, 25, 23, 0) 92%, rgba(28, 25, 23, 0.09) 100%);
+}
+
+.pocketbook-spine-right {
+  background: linear-gradient(90deg, rgba(28, 25, 23, 0.09) 0%, rgba(28, 25, 23, 0) 8%, rgba(28, 25, 23, 0) 92%, rgba(28, 25, 23, 0.03) 100%);
+}
+
+.pocketbook-page-stack-left {
+  box-shadow:
+    -3px 0 0 -1px #EFECE6,
+    -6px 0 0 -2px #E5E0D8,
+    -9px 0 0 -3px #D6CEBE,
+    -14px 8px 24px rgba(28, 25, 23, 0.08);
+}
+
+.pocketbook-page-stack-right {
+  box-shadow:
+    3px 0 0 -1px #EFECE6,
+    6px 0 0 -2px #E5E0D8,
+    9px 0 0 -3px #D6CEBE,
+    14px 8px 24px rgba(28, 25, 23, 0.08);
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 53, 15, 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 53, 15, 0.4);
+}
+
+/* 3D Book Page Flipping Animations */
+.book-perspective {
+  perspective: 1500px;
+}
+
+@keyframes advancedPeelRTL {
+  0% {
+    transform: rotateY(0deg) skewY(0deg) scaleX(1);
+    transform-origin: left center;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+  }
+  40% {
+    transform: rotateY(-38deg) skewY(-3deg) scaleX(0.96) translateX(-4%);
+    transform-origin: left center;
+    box-shadow: -25px 25px 45px rgba(28, 25, 23, 0.22);
+  }
+  75% {
+    transform: rotateY(-115deg) skewY(-4deg) scaleX(0.9) translateX(-8%);
+    transform-origin: left center;
+    box-shadow: -40px 30px 60px rgba(28, 25, 23, 0.15);
+  }
+  100% {
+    transform: rotateY(-180deg) skewY(0deg) scaleX(1) translateX(0);
+    transform-origin: left center;
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+@keyframes advancedPeelLTR {
+  0% {
+    transform: rotateY(0deg) skewY(0deg) scaleX(1);
+    transform-origin: right center;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+  }
+  40% {
+    transform: rotateY(38deg) skewY(3deg) scaleX(0.96) translateX(4%);
+    transform-origin: right center;
+    box-shadow: 25px 25px 45px rgba(28, 25, 23, 0.22);
+  }
+  75% {
+    transform: rotateY(115deg) skewY(4deg) scaleX(0.9) translateX(8%);
+    transform-origin: right center;
+    box-shadow: 40px 30px 60px rgba(28, 25, 23, 0.15);
+  }
+  100% {
+    transform: rotateY(180deg) skewY(0deg) scaleX(1) translateX(0);
+    transform-origin: right center;
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+.leaf-turn-rtl {
+  animation: advancedPeelRTL 0.58s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.leaf-turn-ltr {
+  animation: advancedPeelLTR 0.58s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes shadowSweepRTL {
+  0% {
+    transform: translateX(50%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.35;
+  }
+  70% {
+    opacity: 0.2;
+  }
+  100% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+}
+
+@keyframes shadowSweepLTR {
+  0% {
+    transform: translateX(-50%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.35;
+  }
+  70% {
+    opacity: 0.2;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.sweeping-shadow-rtl {
+  animation: shadowSweepRTL 0.58s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.sweeping-shadow-ltr {
+  animation: shadowSweepLTR 0.58s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}

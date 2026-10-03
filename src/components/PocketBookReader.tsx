@@ -1,0 +1,1159 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Bookmark,
+  BookOpen,
+  List,
+  MessageSquarePlus,
+  Search,
+  Minus,
+  Plus,
+  Columns2,
+  RectangleVertical,
+  Eye,
+  Trash2,
+  Check,
+  Smartphone,
+  Upload,
+} from 'lucide-react';
+import {
+  HasyiyahNote,
+  KitabDocument,
+  KitabPage,
+  NoteCategory,
+  PaperTheme,
+  ReaderSettings,
+} from '../types/kitab';
+import * as pdfjsLib from 'pdfjs-dist';
+import { renderPdfPageToCanvas, loadPdfArrayBuffer } from '../utils/pdfProcessor';
+
+interface PocketBookReaderProps {
+  kitab: KitabDocument;
+  notes: HasyiyahNote[];
+  settings: ReaderSettings;
+  onUpdateSettings: (partial: Partial<ReaderSettings>) => void;
+  onPageChange: (newPage: number) => void;
+  onToggleBookmark: (pageNumber: number) => void;
+  onAddNote: (note: Omit<HasyiyahNote, 'id' | 'createdAt'>) => void;
+  onDeleteNote: (noteId: string) => void;
+  onOpenUploadModal: () => void;
+  onBackToLibrary: () => void;
+}
+
+const THEME_STYLES: Record<
+  PaperTheme,
+  {
+    name: string;
+    pageBg: string;
+    pageText: string;
+    mutedText: string;
+    border: string;
+    accentText: string;
+    matanBg: string;
+    swatch: string;
+  }
+> = {
+  alabaster: {
+    name: 'Kertas Alabaster',
+    pageBg: 'bg-[#FBF9F5]',
+    pageText: 'text-[#1C1917]',
+    mutedText: 'text-[#57534E]',
+    border: 'border-[#E2DCD0]',
+    accentText: 'text-[#78350F]',
+    matanBg: 'bg-[#F4EFE6]',
+    swatch: 'bg-[#FBF9F5] border-[#D6CEBE]',
+  },
+  kuning: {
+    name: 'Kitab Kuning Turats',
+    pageBg: 'bg-[#F5E6C4]',
+    pageText: 'text-[#261C14]',
+    mutedText: 'text-[#6B533B]',
+    border: 'border-[#DEC89B]',
+    accentText: 'text-[#7C2D12]',
+    matanBg: 'bg-[#EEDB9F]/55',
+    swatch: 'bg-[#F5E6C4] border-[#C9B07A]',
+  },
+  eink: {
+    name: 'Layar E-Ink PocketBook',
+    pageBg: 'bg-[#EAE8E1]',
+    pageText: 'text-[#18181B]',
+    mutedText: 'text-[#52525B]',
+    border: 'border-[#D4D1C7]',
+    accentText: 'text-[#27272A]',
+    matanBg: 'bg-[#DFDDD4]',
+    swatch: 'bg-[#EAE8E1] border-[#A1A1AA]',
+  },
+  malam: {
+    name: 'Lentera Malam',
+    pageBg: 'bg-[#181614]',
+    pageText: 'text-[#E7E2DA] tracking-[0.01em]',
+    mutedText: 'text-[#A8A29E]',
+    border: 'border-[#2E2A27]',
+    accentText: 'text-[#D97706]',
+    matanBg: 'bg-[#221F1C]',
+    swatch: 'bg-[#181614] border-[#57534E]',
+  },
+};
+
+const NOTE_CATEGORY_LABELS: Record<NoteCategory, string> = {
+  syarah: 'Syarah & Uraian',
+  makna: 'Makna & Mufradat',
+  dalil: 'Dalil & Rujukan',
+  muzakarah: 'Pertanyaan Muzakarah',
+};
+
+const PdfCanvasPage: React.FC<{
+  pdfDoc: any;
+  pageNumber: number;
+}> = ({ pdfDoc, pageNumber }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  useEffect(() => {
+    let active = true;
+    if (!pdfDoc) {
+      setStatus('loading');
+      return;
+    }
+    if (!canvasRef.current) {
+      setStatus('error');
+      return;
+    }
+    if (pageNumber < 1 || pageNumber > pdfDoc.numPages) {
+      setStatus('error');
+      return;
+    }
+
+    setStatus('loading');
+    pdfDoc.getPage(pageNumber).then((page: any) => {
+      if (!active) return;
+      const viewport = page.getViewport({ scale: 1.35 });
+      const context = canvasRef.current?.getContext('2d');
+      if (!context) {
+        setStatus('error');
+        return;
+      }
+      if (canvasRef.current) {
+        canvasRef.current.height = viewport.height;
+        canvasRef.current.width = viewport.width;
+      }
+      page.render({
+        canvasContext: context,
+        viewport,
+      }).promise.then(() => {
+        if (active) setStatus('ready');
+      }).catch(() => {
+        if (active) setStatus('error');
+      });
+    }).catch(() => {
+      if (active) setStatus('error');
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [pdfDoc, pageNumber]);
+
+  return (
+    <div className="relative w-full flex flex-col items-center justify-center bg-white/40 p-1 border border-[#D6CEBE]/50 shadow-xs">
+      {status === 'loading' && (
+        <div className="flex flex-col items-center justify-center py-16 text-xs text-[#57534E] font-mono-tabular">
+          <p>Memuat Lembar {pageNumber}...</p>
+        </div>
+      )}
+      <canvas
+        ref={canvasRef}
+        className={`max-w-full h-auto ${status === 'ready' ? 'block' : 'hidden'}`}
+      />
+    </div>
+  );
+};
+
+export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
+  kitab,
+  notes,
+  settings,
+  onUpdateSettings,
+  onPageChange,
+  onToggleBookmark,
+  onAddNote,
+  onDeleteNote,
+  onOpenUploadModal,
+  onBackToLibrary,
+}) => {
+  const [showTocDrawer, setShowTocDrawer] = useState(false);
+  const [showSearchPopover, setShowSearchPopover] = useState(false);
+  const [inBookQuery, setInBookQuery] = useState('');
+  const [newNoteText, setNewNoteText] = useState('');
+  const [newNoteQuote, setNewNoteQuote] = useState('');
+  const [newNoteCategory, setNewNoteCategory] = useState<NoteCategory>('syarah');
+  const [activeNoteTargetPage, setActiveNoteTargetPage] = useState<number>(kitab.lastReadPage);
+  const [justSavedNote, setJustSavedNote] = useState(false);
+  const [pdfDoc, setPdfDoc] = useState<any>(null);
+
+  useEffect(() => {
+    if (kitab.isUploadedPdf && kitab.pdfBlobKey) {
+      setPdfDoc(null);
+      loadPdfArrayBuffer(kitab.pdfBlobKey).then((buffer) => {
+        if (buffer) {
+          pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise.then((doc) => {
+            setPdfDoc(doc);
+          }).catch((err) => {
+            console.error("Error loading PDF document:", err);
+          });
+        }
+      });
+    } else {
+      setPdfDoc(null);
+    }
+  }, [kitab.pdfBlobKey, kitab.isUploadedPdf]);
+
+  const currentPage = Math.min(Math.max(1, kitab.lastReadPage), kitab.totalPages);
+  const isDouble = settings.spreadMode === 'double';
+
+  const leftPageNum = isDouble
+    ? currentPage % 2 === 0
+      ? Math.max(1, currentPage - 1)
+      : currentPage
+    : currentPage;
+  const rightPageNum = isDouble && leftPageNum + 1 <= kitab.totalPages ? leftPageNum + 1 : null;
+
+  useEffect(() => {
+    setActiveNoteTargetPage(currentPage);
+  }, [currentPage]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA'
+      ) {
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleNextPage();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handlePrevPage();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
+  const bookContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const [dragState, setDragState] = useState<{
+    isDragging: boolean;
+    direction: 'rtl' | 'ltr' | null;
+    progress: number;
+  }>({ isDragging: false, direction: null, progress: 0 });
+
+  const [flipDirection, setFlipDirection] = useState<'rtl' | 'ltr' | null>(null);
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
+  const step = isDouble ? 2 : 1;
+
+  const handlePrevPage = () => {
+    if (leftPageNum > 1 && !flipDirection) {
+      setFlipDirection('rtl');
+      onPageChange(Math.max(1, leftPageNum - step));
+      setTimeout(() => setFlipDirection(null), 550);
+    }
+  };
+
+  const handleNextPage = () => {
+    const maxCurrent = rightPageNum || leftPageNum;
+    if (maxCurrent < kitab.totalPages && !flipDirection) {
+      setFlipDirection('ltr');
+      onPageChange(Math.min(kitab.totalPages, leftPageNum + step));
+      setTimeout(() => setFlipDirection(null), 550);
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (flipDirection) return;
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    setDragState({
+      isDragging: false,
+      direction: null,
+      progress: 0,
+    });
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartX.current === null || touchStartY.current === null || flipDirection) return;
+    const currentX = e.touches[0].clientX;
+    const currentY = e.touches[0].clientY;
+    const diffX = currentX - touchStartX.current;
+    const diffY = currentY - touchStartY.current;
+
+    if (!dragState.isDragging) {
+      if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 10) {
+        const direction = diffX > 0 ? 'ltr' : 'rtl';
+        setDragState({
+          isDragging: true,
+          direction,
+          progress: 0,
+        });
+      }
+    } else {
+      const width = bookContainerRef.current?.clientWidth || 800;
+      const halfWidth = width / 2;
+      let progress = 0;
+
+      if (dragState.direction === 'ltr') {
+        // Swipe Right -> Next Page: diffX goes from 0 to positive
+        progress = Math.min(1, Math.max(0, diffX / halfWidth));
+      } else if (dragState.direction === 'rtl') {
+        // Swipe Left -> Prev Page: diffX goes from 0 to negative
+        progress = Math.min(1, Math.max(0, -diffX / halfWidth));
+      }
+
+      setDragState((prev) => ({
+        ...prev,
+        progress,
+      }));
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStartX.current === null || flipDirection) return;
+
+    if (dragState.isDragging && dragState.direction) {
+      const threshold = 0.22; // 22% progress is enough to trigger page turn
+      if (dragState.progress >= threshold) {
+        if (dragState.direction === 'ltr') {
+          // Trigger next page with beautiful quick automated completing peel transition
+          setFlipDirection('ltr');
+          onPageChange(Math.min(kitab.totalPages, leftPageNum + step));
+          setTimeout(() => setFlipDirection(null), 550);
+        } else {
+          // Trigger previous page
+          setFlipDirection('rtl');
+          onPageChange(Math.max(1, leftPageNum - step));
+          setTimeout(() => setFlipDirection(null), 550);
+        }
+      }
+    }
+
+    touchStartX.current = null;
+    touchStartY.current = null;
+    setDragState({ isDragging: false, direction: null, progress: 0 });
+  };
+
+  const handleTextSelectionOnPage = (pageNum: number) => {
+    const selection = window.getSelection()?.toString().trim();
+    if (selection && selection.length > 3) {
+      setNewNoteQuote(selection.slice(0, 180));
+      setActiveNoteTargetPage(pageNum);
+      if (!settings.showMarginNotes) {
+        onUpdateSettings({ showMarginNotes: true });
+      }
+    }
+  };
+
+  const handleSaveNote = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newNoteText.trim()) return;
+    onAddNote({
+      kitabId: kitab.id,
+      pageNumber: activeNoteTargetPage,
+      category: newNoteCategory,
+      quotedText: newNoteQuote.trim() || undefined,
+      content: newNoteText.trim(),
+    });
+    setNewNoteText('');
+    setNewNoteQuote('');
+    setJustSavedNote(true);
+    setTimeout(() => setJustSavedNote(false), 1800);
+  };
+
+  const themeStyle = THEME_STYLES[settings.theme];
+  const leftPageData = kitab.pages.find((p) => p.pageNumber === leftPageNum) || kitab.pages[0];
+  const rightPageData = rightPageNum
+    ? kitab.pages.find((p) => p.pageNumber === rightPageNum) || null
+    : null;
+
+  const visiblePageNumbers = rightPageNum ? [leftPageNum, rightPageNum] : [leftPageNum];
+  const currentSpreadNotes = notes.filter(
+    (n) => n.kitabId === kitab.id && visiblePageNumbers.includes(n.pageNumber)
+  );
+  const allKitabNotes = notes.filter((n) => n.kitabId === kitab.id);
+
+  const searchMatches =
+    inBookQuery.trim().length > 1
+      ? kitab.pages.filter((p) => {
+          const q = inBookQuery.toLowerCase();
+          return (
+            p.chapterTitle.toLowerCase().includes(q) ||
+            p.paragraphs.some((para) => para.toLowerCase().includes(q))
+          );
+        })
+      : [];
+
+  const progressPercentage = Math.round(
+    ((rightPageNum || leftPageNum) / Math.max(1, kitab.totalPages)) * 100
+  );
+
+  const renderSingleSheet = (pageData: KitabPage, side: 'left' | 'right' | 'single') => {
+    const isBookmarked = kitab.bookmarks.includes(pageData.pageNumber);
+    const pageNotesCount = notes.filter(
+      (n) => n.kitabId === kitab.id && n.pageNumber === pageData.pageNumber
+    ).length;
+
+    const spineClass =
+      side === 'left'
+        ? 'pocketbook-spine-left pocketbook-page-stack-left border-r'
+        : side === 'right'
+        ? 'pocketbook-spine-right pocketbook-page-stack-right'
+        : 'pocketbook-page-stack-right';
+
+    const curveClass =
+      side === 'left'
+        ? 'pocketbook-curve-left'
+        : side === 'right'
+        ? 'pocketbook-curve-right'
+        : '';
+
+    const lineLeadingClass =
+      settings.lineHeight === 'loose'
+        ? 'leading-[1.95]'
+        : settings.lineHeight === 'relaxed'
+        ? 'leading-[1.78]'
+        : 'leading-[1.6]';
+
+    return (
+      <article
+        onMouseUp={() => handleTextSelectionOnPage(pageData.pageNumber)}
+        className={`relative flex flex-col justify-between min-h-[360px] sm:min-h-[580px] lg:min-h-[660px] p-3 sm:p-8 lg:p-12 transition-colors duration-150 border ${themeStyle.pageBg} ${themeStyle.pageText} ${themeStyle.border} ${spineClass} ${curveClass}`}
+      >
+        {isBookmarked && (
+          <div
+            onClick={() => onToggleBookmark(pageData.pageNumber)}
+            title="Hapus pita penanda halaman"
+            className="cursor-pointer absolute -top-1 right-8 w-6 h-14 bg-[#9A3412] shadow-md flex flex-col items-center justify-end pb-2 transition-transform hover:translate-y-0.5"
+            style={{
+              clipPath: 'polygon(0 0, 100% 0, 100% 100%, 50% 82%, 0 100%)',
+            }}
+          />
+        )}
+
+        <div>
+          <header
+            className={`flex items-center justify-between pb-3 mb-6 border-b ${themeStyle.border} text-xs ${themeStyle.mutedText}`}
+          >
+            <span className="truncate max-w-[70%] font-sans tracking-wider uppercase">
+              {side === 'left' ? kitab.title : pageData.chapterTitle}
+            </span>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => onToggleBookmark(pageData.pageNumber)}
+                className={`flex items-center gap-1 text-xs transition-colors ${
+                  isBookmarked ? 'text-[#9A3412] font-semibold' : 'hover:opacity-80'
+                }`}
+                title="Pasang atau lepas pita penanda halaman"
+              >
+                <Bookmark
+                  className={`w-3.5 h-3.5 ${isBookmarked ? 'fill-[#9A3412]' : ''}`}
+                />
+                <span>{isBookmarked ? 'Ditandai' : 'Tandai'}</span>
+              </button>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono-tabular">Hal. {pageData.pageNumber}</span>
+            </div>
+          </header>
+
+          {!kitab.isUploadedPdf && kitab.chapters.some((ch) => ch.startPage === pageData.pageNumber) && (
+            <div className={`mb-6 pb-4 border-b border-double ${themeStyle.border}`}>
+              <p className={`text-xs uppercase tracking-widest font-sans ${themeStyle.accentText}`}>
+                {kitab.catalogNumber} · Lembar Bab
+              </p>
+              <h2 className="text-2xl sm:text-3xl font-display font-semibold mt-1 text-balance">
+                {pageData.chapterTitle}
+              </h2>
+            </div>
+          )}
+
+          {kitab.isUploadedPdf ? (
+            <PdfCanvasPage pdfDoc={pdfDoc} pageNumber={pageData.pageNumber} />
+          ) : (
+            <div className="space-y-5">
+              {settings.showArabicMatan && pageData.arabicMatan && (
+                <div
+                  dir="rtl"
+                  className={`p-4 sm:p-5 border-r-2 border-[#78350F] ${themeStyle.matanBg}`}
+                >
+                  <p className="font-arabic text-xl sm:text-2xl leading-[2.1] text-right">
+                    {pageData.arabicMatan}
+                  </p>
+                </div>
+              )}
+
+              <div
+                style={{ fontSize: `${settings.fontSize}px` }}
+                className={`space-y-4 max-w-[68ch] ${lineLeadingClass}`}
+              >
+                {pageData.paragraphs.map((paragraph, idx) => (
+                  <p
+                    key={idx}
+                    className={`text-justify ${
+                      idx === 0
+                        ? 'first-letter:text-4xl first-letter:font-display first-letter:font-bold first-letter:float-left first-letter:mr-3 first-letter:leading-none first-letter:mt-1'
+                        : ''
+                    }`}
+                  >
+                    {paragraph}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <footer className={`mt-8 pt-4 border-t ${themeStyle.border} space-y-2`}>
+          {pageData.footnote && (
+            <p className={`text-xs italic ${themeStyle.mutedText}`}>{pageData.footnote}</p>
+          )}
+          <div className="flex items-center justify-between text-xs font-mono-tabular">
+            <span className={themeStyle.mutedText}>
+              {pageNotesCount > 0
+                ? `${pageNotesCount} Catatan Hasyiyah pada lembar ini`
+                : 'Sorot teks untuk menulis hasyiyah'}
+            </span>
+            <span className="font-semibold">
+              — {String(pageData.pageNumber).padStart(2, '0')} —
+            </span>
+          </div>
+        </footer>
+      </article>
+    );
+  };
+
+  return (
+    <section className="w-full max-w-[1440px] mx-auto px-4 sm:px-8 py-6">
+      {/* Operational Reader Utility Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-6 border-b border-[#D6CEBE]">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={onBackToLibrary}
+            className="px-3 py-1.5 text-xs font-medium border border-[#D6CEBE] bg-[#F7F4EE] text-[#1C1917] hover:bg-[#EBE6DF] transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+            Pustaka
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowTocDrawer(!showTocDrawer)}
+            className={`px-3 py-1.5 text-xs font-medium border transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              showTocDrawer
+                ? 'border-[#1C1917] bg-[#1C1917] text-white'
+                : 'border-[#D6CEBE] bg-[#F7F4EE] text-[#1C1917] hover:bg-[#EBE6DF]'
+            }`}
+          >
+            <List className="w-3.5 h-3.5" />
+            Daftar Bab ({kitab.chapters.length})
+          </button>
+
+          <div className="hidden md:flex items-center gap-2 text-xs text-[#57534E] truncate">
+            <span className="font-semibold text-[#1C1917] truncate">{kitab.title}</span>
+            <span aria-hidden="true">·</span>
+            <span className="font-mono-tabular">{kitab.catalogNumber}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Paper Theme Swatches */}
+          <div className="flex items-center gap-1 px-2 py-1 bg-[#F3EFE6] border border-[#D6CEBE]">
+            {(Object.keys(THEME_STYLES) as PaperTheme[]).map((themeKey) => (
+              <button
+                key={themeKey}
+                type="button"
+                onClick={() => onUpdateSettings({ theme: themeKey })}
+                title={THEME_STYLES[themeKey].name}
+                className={`px-2 py-1 text-xs flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                  settings.theme === themeKey
+                    ? 'bg-[#1C1917] text-white font-medium'
+                    : 'text-[#57534E] hover:text-[#1C1917]'
+                }`}
+              >
+                <span className={`w-2.5 h-2.5 border ${THEME_STYLES[themeKey].swatch}`} />
+                <span className="hidden xl:inline">{THEME_STYLES[themeKey].name.split(' ')[1]}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Font Size Adjuster */}
+          <div className="flex items-center border border-[#D6CEBE] bg-[#F7F4EE]">
+            <button
+              type="button"
+              onClick={() =>
+                onUpdateSettings({ fontSize: Math.max(14, settings.fontSize - 1) })
+              }
+              className="px-2.5 py-1.5 text-xs text-[#1C1917] hover:bg-[#EBE6DF] transition-colors"
+              title="Perkecil ukuran huruf"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+            <span className="px-2 text-xs font-mono-tabular text-[#57534E]">
+              {settings.fontSize}px
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                onUpdateSettings({ fontSize: Math.min(24, settings.fontSize + 1) })
+              }
+              className="px-2.5 py-1.5 text-xs text-[#1C1917] hover:bg-[#EBE6DF] transition-colors"
+              title="Perbesar ukuran huruf"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="hidden lg:flex items-center border border-[#D6CEBE] bg-[#F7F4EE]">
+            <button
+              type="button"
+              onClick={() => onUpdateSettings({ spreadMode: 'double' })}
+              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 transition-colors whitespace-nowrap ${
+                settings.spreadMode === 'double'
+                  ? 'bg-[#1C1917] text-white'
+                  : 'text-[#57534E] hover:text-[#1C1917]'
+              }`}
+              title="Mode Lembaran Ganda (2 Halaman)"
+            >
+              <Columns2 className="w-3.5 h-3.5" />
+              <span>2 Lembar</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onUpdateSettings({ spreadMode: 'single' })}
+              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 transition-colors whitespace-nowrap ${
+                settings.spreadMode === 'single'
+                  ? 'bg-[#1C1917] text-white'
+                  : 'text-[#57534E] hover:text-[#1C1917]'
+              }`}
+              title="Mode E-Reader Satu Halaman"
+            >
+              <RectangleVertical className="w-3.5 h-3.5" />
+              <span>1 Lembar</span>
+            </button>
+          </div>
+
+
+
+
+
+          <button
+            type="button"
+            onClick={() => setShowSearchPopover(!showSearchPopover)}
+            className={`px-2.5 py-1.5 text-xs border flex items-center gap-1 transition-colors ${
+              showSearchPopover
+                ? 'border-[#1C1917] bg-[#1C1917] text-white'
+                : 'border-[#D6CEBE] bg-[#F7F4EE] text-[#1C1917] hover:bg-[#EBE6DF]'
+            }`}
+            title="Cari kata di dalam kitab ini"
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              onUpdateSettings({ showMarginNotes: !settings.showMarginNotes })
+            }
+            className={`px-3 py-1.5 text-xs font-medium border flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+              settings.showMarginNotes
+                ? 'border-[#1C1917] bg-[#1C1917] text-white'
+                : 'border-[#D6CEBE] bg-[#F7F4EE] text-[#1C1917] hover:bg-[#EBE6DF]'
+            }`}
+          >
+            <MessageSquarePlus className="w-3.5 h-3.5" />
+            <span>Hasyiyah ({allKitabNotes.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {showSearchPopover && (
+        <div className="mb-6 p-4 bg-[#F7F4EE] border border-[#D6CEBE]">
+          <div className="flex items-center gap-3">
+            <Search className="w-4 h-4 text-[#78350F] shrink-0" />
+            <input
+              type="text"
+              value={inBookQuery}
+              onChange={(e) => setInBookQuery(e.target.value)}
+              placeholder={`Cari kalimat atau istilah di dalam "${kitab.title}"...`}
+              className="w-full bg-white px-3 py-1.5 text-sm border border-[#D6CEBE] focus:outline-none focus:border-[#78350F]"
+            />
+            {inBookQuery && (
+              <button
+                type="button"
+                onClick={() => setInBookQuery('')}
+                className="text-xs text-[#57534E] hover:text-[#1C1917]"
+              >
+                Bersihkan
+              </button>
+            )}
+          </div>
+          {inBookQuery.trim().length > 1 && (
+            <div className="mt-3 pt-3 border-t border-[#E5DEC9]">
+              <p className="text-xs text-[#57534E] mb-2">
+                Ditemukan pada {searchMatches.length} halaman:
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {searchMatches.map((matchPage) => (
+                  <button
+                    key={matchPage.pageNumber}
+                    type="button"
+                    onClick={() => {
+                      onPageChange(matchPage.pageNumber);
+                      setShowSearchPopover(false);
+                    }}
+                    className="text-left p-2.5 bg-white border border-[#D6CEBE] hover:border-[#78350F] transition-colors"
+                  >
+                    <p className="text-xs font-mono-tabular font-semibold text-[#78350F]">
+                      Halaman {matchPage.pageNumber} · {matchPage.chapterTitle}
+                    </p>
+                    <p className="text-xs text-[#44403C] line-clamp-2 mt-1">
+                      {matchPage.paragraphs[0]}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showTocDrawer && (
+        <div className="mb-6 p-5 bg-[#F7F4EE] border border-[#D6CEBE]">
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-[#E5DEC9]">
+            <div>
+              <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
+                Fihris / Daftar Isi Kitab
+              </p>
+              <h3 className="text-lg font-display font-semibold text-[#1C1917]">
+                {kitab.title}
+              </h3>
+            </div>
+            <div className="text-xs text-[#57534E] font-mono-tabular">
+               Penanda aktif: {kitab.bookmarks.length > 0 ? kitab.bookmarks.map((b) => `Hal. ${b}`).join(', ') : 'Belum ada'}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {kitab.chapters.map((ch) => {
+              const isCurrentChapter =
+                currentPage >= ch.startPage &&
+                (!kitab.chapters.find((next) => next.startPage > ch.startPage) ||
+                  currentPage <
+                    (kitab.chapters.find((next) => next.startPage > ch.startPage)?.startPage ||
+                      9999));
+              return (
+                <button
+                  key={ch.id}
+                  type="button"
+                  onClick={() => {
+                    onPageChange(ch.startPage);
+                    setShowTocDrawer(false);
+                  }}
+                  className={`text-left p-3 border transition-colors ${
+                    isCurrentChapter
+                      ? 'border-[#78350F] bg-[#78350F]/10'
+                      : 'border-[#D6CEBE] bg-white hover:border-[#78350F]'
+                  }`}
+                >
+                  <p className="text-xs font-mono-tabular text-[#78350F]">
+                    Bab {ch.number} · Mulai Hal. {ch.startPage}
+                  </p>
+                  <p className="text-sm font-medium text-[#1C1917] mt-1 line-clamp-1">
+                    {ch.title}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        <div
+          className={
+            settings.showMarginNotes ? 'lg:col-span-8 xl:col-span-9' : 'lg:col-span-12'
+          }
+        >
+          <div
+            className={
+              settings.showHardwareBezel
+                ? 'p-4 sm:p-7 bg-[#262320] border-4 border-[#3D3834] shadow-2xl rounded-xl relative'
+                : 'relative'
+            }
+          >
+            {settings.showHardwareBezel && (
+              <div className="flex items-center justify-between px-3 pb-3 mb-2 text-[11px] font-mono-tabular text-[#A8A29E]">
+                <span>POCKETBOOK · TANG KETAB EDITION</span>
+                <span>
+                  {kitab.isUploadedPdf ? 'DOKUMEN PDF PRIBADI' : 'NASKAH TURATS'} · {progressPercentage}%
+                </span>
+              </div>
+            )}
+
+            <div 
+              ref={bookContainerRef}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              className="relative overflow-hidden"
+            >
+              {/* 3D Spine Crease Overlay */}
+              {isDouble && rightPageData && (
+                <div className="absolute left-1/2 top-0 bottom-0 w-[14px] -ml-[7px] bg-gradient-to-r from-black/10 via-black/30 to-black/10 pointer-events-none z-10 shadow-[0_0_8px_rgba(0,0,0,0.18)]" />
+              )}
+
+              {/* Real-time drag sheet for Next Page (LTR) */}
+              {dragState.isDragging && dragState.direction === 'ltr' && (
+                <div className="absolute inset-0 pointer-events-none z-30 flex">
+                  {/* Left half - Curling page */}
+                  <div className="w-1/2 h-full relative book-perspective">
+                    <div 
+                      className={`absolute inset-0 border border-[#D6CEBE]/40 rounded-r-md ${themeStyle.pageBg}`}
+                      style={{
+                        transform: `rotateY(${dragState.progress * 135}deg) skewY(${dragState.progress * 3}deg) translateX(${dragState.progress * 8}px)`,
+                        transformOrigin: 'right center',
+                        boxShadow: `${dragState.progress * 30}px 12px 35px rgba(28, 25, 23, ${dragState.progress * 0.22})`,
+                        transformStyle: 'preserve-3d',
+                      }}
+                    >
+                      {/* Paper thickness/shading overlay */}
+                      <div 
+                        className="absolute inset-0 bg-gradient-to-l from-black/15 via-white/20 to-black/5 pointer-events-none"
+                        style={{ opacity: dragState.progress }}
+                      />
+                      <div className="absolute left-0 top-0 bottom-0 w-[15px] bg-gradient-to-r from-black/20 to-transparent" />
+                    </div>
+                  </div>
+                  {/* Right half - Shadow overlay */}
+                  <div className="w-1/2 h-full relative overflow-hidden bg-black/5">
+                    <div 
+                      className="absolute left-0 top-0 bottom-0 w-32 bg-gradient-to-r from-black/25 via-black/10 to-transparent"
+                      style={{
+                        transform: `translateX(${(dragState.progress - 1) * 100}%)`,
+                        opacity: dragState.progress * 0.4,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Real-time drag sheet for Prev Page (RTL) */}
+              {dragState.isDragging && dragState.direction === 'rtl' && (
+                <div className="absolute inset-0 pointer-events-none z-30 flex">
+                  {/* Left half - Shadow overlay */}
+                  <div className="w-1/2 h-full relative overflow-hidden bg-black/5">
+                    <div 
+                      className="absolute right-0 top-0 bottom-0 w-32 bg-gradient-to-l from-black/25 via-black/10 to-transparent"
+                      style={{
+                        transform: `translateX(${(1 - dragState.progress) * 100}%)`,
+                        opacity: dragState.progress * 0.4,
+                      }}
+                    />
+                  </div>
+                  {/* Right half - Curling page */}
+                  <div className="w-1/2 h-full relative book-perspective">
+                    <div 
+                      className={`absolute inset-0 border border-[#D6CEBE]/40 rounded-l-md ${themeStyle.pageBg}`}
+                      style={{
+                        transform: `rotateY(${-dragState.progress * 135}deg) skewY(${-dragState.progress * 3}deg) translateX(${-dragState.progress * 8}px)`,
+                        transformOrigin: 'left center',
+                        boxShadow: `-${dragState.progress * 30}px 12px 35px rgba(28, 25, 23, ${dragState.progress * 0.22})`,
+                        transformStyle: 'preserve-3d',
+                      }}
+                    >
+                      {/* Paper thickness/shading overlay */}
+                      <div 
+                        className="absolute inset-0 bg-gradient-to-r from-black/15 via-white/20 to-black/5 pointer-events-none"
+                        style={{ opacity: dragState.progress }}
+                      />
+                      <div className="absolute right-0 top-0 bottom-0 w-[15px] bg-gradient-to-l from-black/20 to-transparent" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 3D Curling Sheet Overlay (Seperti Video) */}
+              {flipDirection === 'rtl' && (
+                <div className="absolute inset-0 pointer-events-none z-30 flex">
+                  {/* Left half has dynamic shadow sweep */}
+                  <div className="w-1/2 h-full relative overflow-hidden bg-black/5">
+                    <div className="absolute right-0 top-0 bottom-0 w-32 bg-gradient-to-l from-black/20 via-black/10 to-transparent sweeping-shadow-rtl" />
+                  </div>
+                  {/* Right half is the curling paper leaf */}
+                  <div className="w-1/2 h-full relative book-perspective">
+                    <div 
+                      className={`absolute inset-0 border border-[#D6CEBE]/40 shadow-2xl rounded-l-md leaf-turn-rtl ${themeStyle.pageBg}`}
+                      style={{ transformStyle: 'preserve-3d' }}
+                    >
+                      {/* Paper thickness and curl shadow overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-black/15 via-white/25 to-black/5 pointer-events-none" />
+                      <div className="absolute right-0 top-0 bottom-0 w-[15px] bg-gradient-to-l from-black/25 to-transparent" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {flipDirection === 'ltr' && (
+                <div className="absolute inset-0 pointer-events-none z-30 flex">
+                  {/* Left half is the curling paper leaf */}
+                  <div className="w-1/2 h-full relative book-perspective">
+                    <div 
+                      className={`absolute inset-0 border border-[#D6CEBE]/40 shadow-2xl rounded-r-md leaf-turn-ltr ${themeStyle.pageBg}`}
+                      style={{ transformStyle: 'preserve-3d' }}
+                    >
+                      {/* Paper thickness and curl shadow overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-l from-black/15 via-white/25 to-black/5 pointer-events-none" />
+                      <div className="absolute left-0 top-0 bottom-0 w-[15px] bg-gradient-to-r from-black/25 to-transparent" />
+                    </div>
+                  </div>
+                  {/* Right half has dynamic shadow sweep */}
+                  <div className="w-1/2 h-full relative overflow-hidden bg-black/5">
+                    <div className="absolute left-0 top-0 bottom-0 w-32 bg-gradient-to-r from-black/20 via-black/10 to-transparent sweeping-shadow-ltr" />
+                  </div>
+                </div>
+              )}
+
+              <div
+                className={`grid select-none transition-transform duration-300 ${
+                  isDouble && rightPageData ? 'grid-cols-2' : 'grid-cols-1 max-w-3xl mx-auto'
+                }`}
+              >
+                {isDouble && rightPageData ? (
+                  <>
+                    {renderSingleSheet(rightPageData, 'left')}
+                    {renderSingleSheet(leftPageData, 'right')}
+                  </>
+                ) : (
+                  renderSingleSheet(leftPageData, 'single')
+                )}
+              </div>
+            </div>
+
+            <div
+              className={`mt-5 flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-3 border ${
+                settings.showHardwareBezel
+                  ? 'bg-[#1C1917] border-[#3D3834] text-[#E7E2DA]'
+                  : 'bg-[#F7F4EE] border-[#D6CEBE] text-[#1C1917]'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={handlePrevPage}
+                disabled={leftPageNum <= 1}
+                className={`px-4 py-2 text-xs font-medium flex items-center gap-2 border transition-colors whitespace-nowrap ${
+                  leftPageNum <= 1
+                    ? 'opacity-40 cursor-not-allowed border-transparent'
+                    : settings.showHardwareBezel
+                    ? 'border-[#57534E] bg-[#292524] hover:bg-[#3D3834] text-white'
+                    : 'border-[#D6CEBE] bg-white hover:bg-[#EBE6DF] text-[#1C1917]'
+                }`}
+              >
+                <ChevronLeft className="w-4 h-4" />
+                <span>Lembar Sebelumnya</span>
+              </button>
+
+              <div className="flex flex-col items-center w-full max-w-md gap-1.5">
+                <div className="flex items-center justify-between w-full text-xs font-mono-tabular">
+                  <span>
+                    Halaman {leftPageNum}
+                    {rightPageNum ? `–${rightPageNum}` : ''} dari {kitab.totalPages}
+                  </span>
+                  <span>{progressPercentage}% Selesai</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={kitab.totalPages}
+                  value={currentPage}
+                  onChange={(e) => onPageChange(Number(e.target.value))}
+                  aria-label="Geser halaman kitab"
+                  className="w-full accent-[#78350F] cursor-pointer h-1.5 bg-[#D6CEBE]"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleNextPage}
+                disabled={(rightPageNum || leftPageNum) >= kitab.totalPages}
+                className={`px-4 py-2 text-xs font-medium flex items-center gap-2 border transition-colors whitespace-nowrap ${
+                  (rightPageNum || leftPageNum) >= kitab.totalPages
+                    ? 'opacity-40 cursor-not-allowed border-transparent'
+                    : settings.showHardwareBezel
+                    ? 'border-[#78350F] bg-[#78350F] hover:bg-[#9A3412] text-white'
+                    : 'border-[#1C1917] bg-[#1C1917] hover:bg-[#332E2A] text-white'
+                }`}
+              >
+                <span>Lembar Berikutnya</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {settings.showMarginNotes && (
+          <aside className="lg:col-span-4 xl:col-span-3 space-y-6 bg-[#F7F4EE] border border-[#D6CEBE] p-5">
+            <div className="pb-3 border-b border-[#E5DEC9]">
+              <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
+                Catatan Pinggir · Hasyiyah
+              </p>
+              <h3 className="text-xl font-display font-semibold text-[#1C1917] mt-0.5">
+                Tadabbur Halaman {leftPageNum}
+                {rightPageNum ? `–${rightPageNum}` : ''}
+              </h3>
+            </div>
+
+            <form onSubmit={handleSaveNote} className="space-y-3">
+              <div className="flex items-center justify-between text-xs text-[#57534E]">
+                <span>Target Halaman:</span>
+                <div className="flex items-center gap-1 font-mono-tabular">
+                  <button
+                    type="button"
+                    onClick={() => setActiveNoteTargetPage(leftPageNum)}
+                    className={`px-2 py-0.5 border ${
+                      activeNoteTargetPage === leftPageNum
+                        ? 'border-[#78350F] bg-[#78350F] text-white'
+                        : 'border-[#D6CEBE] bg-white'
+                    }`}
+                  >
+                    Hal. {leftPageNum}
+                  </button>
+                  {rightPageNum && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveNoteTargetPage(rightPageNum)}
+                      className={`px-2 py-0.5 border ${
+                        activeNoteTargetPage === rightPageNum
+                          ? 'border-[#78350F] bg-[#78350F] text-white'
+                          : 'border-[#D6CEBE] bg-white'
+                      }`}
+                    >
+                      Hal. {rightPageNum}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-[#57534E] mb-1 font-sans">
+                  Jenis Catatan
+                </label>
+                <select
+                  value={newNoteCategory}
+                  onChange={(e) => setNewNoteCategory(e.target.value as NoteCategory)}
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-[#D6CEBE] text-[#1C1917] focus:outline-none focus:border-[#78350F]"
+                >
+                  {(Object.keys(NOTE_CATEGORY_LABELS) as NoteCategory[]).map((cat) => (
+                    <option key={cat} value={cat}>
+                      {NOTE_CATEGORY_LABELS[cat]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {newNoteQuote && (
+                <div className="p-2.5 bg-[#FBF9F5] border-l-2 border-[#78350F] text-xs italic text-[#44403C] flex items-start justify-between gap-2">
+                  <span className="line-clamp-2">“{newNoteQuote}”</span>
+                  <button
+                    type="button"
+                    onClick={() => setNewNoteQuote('')}
+                    className="text-[11px] not-italic text-[#9A3412] shrink-0"
+                  >
+                    Hapus
+                  </button>
+                </div>
+              )}
+
+              <textarea
+                rows={3}
+                value={newNoteText}
+                onChange={(e) => setNewNoteText(e.target.value)}
+                placeholder="Tulis syarah, makna mufradat, atau kesimpulan halaman ini..."
+                className="w-full p-3 text-xs bg-white border border-[#D6CEBE] text-[#1C1917] focus:outline-none focus:border-[#78350F] leading-relaxed"
+              />
+
+              <button
+                type="submit"
+                className="w-full py-2 px-4 text-xs font-medium bg-[#78350F] hover:bg-[#5C280B] text-white transition-colors flex items-center justify-center gap-1.5"
+              >
+                {justSavedNote ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Tersimpan di Hasyiyah</span>
+                  </>
+                ) : (
+                  <>
+                    <MessageSquarePlus className="w-3.5 h-3.5" />
+                    <span>Simpan Catatan Hasyiyah</span>
+                  </>
+                )}
+              </button>
+            </form>
+
+            <div className="space-y-3 pt-3 border-t border-[#E5DEC9]">
+              <p className="text-xs font-medium text-[#57534E]">
+                Catatan pada lembar terbuka ({currentSpreadNotes.length})
+              </p>
+
+              {currentSpreadNotes.length === 0 ? (
+                <p className="text-xs text-[#78716C] italic leading-relaxed">
+                  Belum ada catatan pinggir pada halaman ini. Sorot kalimat di halaman kitab atau tulis catatan di atas.
+                </p>
+              ) : (
+                currentSpreadNotes.map((note) => (
+                  <div
+                    key={note.id}
+                    className="p-3.5 bg-[#FBF9F5] border border-[#E2DCD0] space-y-2"
+                  >
+                    <div className="flex items-center justify-between text-[11px] text-[#78350F] font-mono-tabular">
+                      <span>
+                        Hal. {note.pageNumber} · {NOTE_CATEGORY_LABELS[note.category]}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteNote(note.id)}
+                        className="text-[#78716C] hover:text-[#9A3412] transition-colors"
+                        title="Hapus catatan"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {note.quotedText && (
+                      <blockquote className="pl-2.5 border-l-2 border-[#D6CEBE] text-xs italic text-[#57534E]">
+                        “{note.quotedText}”
+                      </blockquote>
+                    )}
+                    <p className="text-xs text-[#1C1917] leading-relaxed">{note.content}</p>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-[#E5DEC9]">
+              <button
+                type="button"
+                onClick={onOpenUploadModal}
+                className="w-full py-2 px-3 text-xs font-medium border border-[#D6CEBE] bg-white hover:bg-[#EBE6DF] text-[#1C1917] transition-colors flex items-center justify-center gap-2"
+              >
+                <Upload className="w-3.5 h-3.5 text-[#78350F]" />
+                <span>Masukkan PDF Kitab Lainnya</span>
+              </button>
+            </div>
+          </aside>
+        )}
+      </div>
+    </section>
+  );
+};

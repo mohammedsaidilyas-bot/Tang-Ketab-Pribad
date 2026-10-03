@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <script>
+      // Otomatis bersihkan cache peramban dan muat ulang halaman satu kali agar tampilan terbaru langsung muncul
+      if (!sessionStorage.getItem('tk_force_refresh_v4')) {
+        sessionStorage.setItem('tk_force_refresh_v4', 'true');
+        if ('caches' in window) {
+          caches.keys().then(function(names) {
+            for (var i = 0; i < names.length; i++) {
+              caches.delete(names[i]);
+            }
+          });
+        }
+        if (navigator.serviceWorker) {
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for (var i = 0; i < registrations.length; i++) {
+              registrations[i].unregister();
+            }
+          });
+        }
+        setTimeout(function() {
+          window.location.reload(true);
+        }, 150);
+      }
+    </script>
+    <title>Tang Ketab Pocket — Personal Pocketbook Library</title>
+    <meta name="description" content="Transform your personal PDF library into an interactive, portable pocketbook experience with seamless online access." />
+    <meta property="og:title" content="Tang Ketab Pocket" />
+    <meta property="og:description" content="Transform your personal PDF library into an interactive, portable pocketbook experience with seamless online access." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,400;1,600&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-[#FBF9F5] text-[#1C1917] antialiased selection:bg-[#78350F]/15 selection:text-[#78350F]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

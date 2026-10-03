@@ -1,0 +1,8 @@
+{
+  "name": "Tang Ketab Pocket",
+  "description": "Transform your personal PDF library into an interactive, portable pocketbook experience with seamless online access.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
