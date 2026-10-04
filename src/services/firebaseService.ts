@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { KitabDocument, HasyiyahNote } from '../types/kitab';
@@ -7,6 +7,11 @@ import { KitabDocument, HasyiyahNote } from '../types/kitab';
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
+
+// Sign in anonymously on startup
+signInAnonymously(auth).catch((err) => {
+  console.warn('Anonymous auth note:', err);
+});
 
 // Firestore CRUD helpers for Kitabs and Notes
 export async function saveKitabToFirestore(kitab: KitabDocument) {

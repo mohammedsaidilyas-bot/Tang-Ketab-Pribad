@@ -1844,64 +1844,66 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
               </div>
             </div>
 
-            <div
-              className={`mt-5 flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-3 border ${
-                settings.showHardwareBezel
-                  ? 'bg-[#1C1917] border-[#3D3834] text-[#E7E2DA]'
-                  : 'bg-[#F7F4EE] border-[#D6CEBE] text-[#1C1917]'
-              }`}
-            >
-              <button
-                type="button"
-                onClick={handlePrevPage}
-                disabled={leftPageNum <= 1}
-                className={`px-4 py-2 text-xs font-medium flex items-center gap-2 border transition-colors whitespace-nowrap ${
-                  leftPageNum <= 1
-                    ? 'opacity-40 cursor-not-allowed border-transparent'
-                    : settings.showHardwareBezel
-                    ? 'border-[#57534E] bg-[#292524] hover:bg-[#3D3834] text-white'
-                    : 'border-[#D6CEBE] bg-white hover:bg-[#EBE6DF] text-[#1C1917]'
+            {onOpenUploadModal && (
+              <div
+                className={`mt-5 flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-3 border ${
+                  settings.showHardwareBezel
+                    ? 'bg-[#1C1917] border-[#3D3834] text-[#E7E2DA]'
+                    : 'bg-[#F7F4EE] border-[#D6CEBE] text-[#1C1917]'
                 }`}
               >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Lembar Sebelumnya</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={handlePrevPage}
+                  disabled={leftPageNum <= 1}
+                  className={`px-4 py-2 text-xs font-medium flex items-center gap-2 border transition-colors whitespace-nowrap ${
+                    leftPageNum <= 1
+                      ? 'opacity-40 cursor-not-allowed border-transparent'
+                      : settings.showHardwareBezel
+                      ? 'border-[#57534E] bg-[#292524] hover:bg-[#3D3834] text-white'
+                      : 'border-[#D6CEBE] bg-white hover:bg-[#EBE6DF] text-[#1C1917]'
+                  }`}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>Lembar Sebelumnya</span>
+                </button>
 
-              <div className="flex flex-col items-center w-full max-w-md gap-1.5">
-                <div className="flex items-center justify-between w-full text-xs font-mono-tabular">
-                  <span>
-                    {formatPageLabel(leftPageNum)}
-                    {rightPageNum ? ` – ${formatPageLabel(rightPageNum)}` : ''} (Total {kitab.totalPages} Lembar PDF)
-                  </span>
-                  <span>{progressPercentage}% Selesai</span>
+                <div className="flex flex-col items-center w-full max-w-md gap-1.5">
+                  <div className="flex items-center justify-between w-full text-xs font-mono-tabular">
+                    <span>
+                      {formatPageLabel(leftPageNum)}
+                      {rightPageNum ? ` – ${formatPageLabel(rightPageNum)}` : ''} (Total {kitab.totalPages} Lembar PDF)
+                    </span>
+                    <span>{progressPercentage}% Selesai</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={kitab.totalPages}
+                    value={currentPage}
+                    onChange={(e) => onPageChange(Number(e.target.value))}
+                    aria-label="Geser halaman kitab"
+                    className="w-full accent-[#78350F] cursor-pointer h-1.5 bg-[#D6CEBE]"
+                  />
                 </div>
-                <input
-                  type="range"
-                  min={1}
-                  max={kitab.totalPages}
-                  value={currentPage}
-                  onChange={(e) => onPageChange(Number(e.target.value))}
-                  aria-label="Geser halaman kitab"
-                  className="w-full accent-[#78350F] cursor-pointer h-1.5 bg-[#D6CEBE]"
-                />
-              </div>
 
-              <button
-                type="button"
-                onClick={handleNextPage}
-                disabled={(rightPageNum || leftPageNum) >= kitab.totalPages}
-                className={`px-4 py-2 text-xs font-medium flex items-center gap-2 border transition-colors whitespace-nowrap ${
-                  (rightPageNum || leftPageNum) >= kitab.totalPages
-                    ? 'opacity-40 cursor-not-allowed border-transparent'
-                    : settings.showHardwareBezel
-                    ? 'border-[#78350F] bg-[#78350F] hover:bg-[#9A3412] text-white'
-                    : 'border-[#1C1917] bg-[#1C1917] hover:bg-[#332E2A] text-white'
-                }`}
-              >
-                <span>Lembar Berikutnya</span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={handleNextPage}
+                  disabled={(rightPageNum || leftPageNum) >= kitab.totalPages}
+                  className={`px-4 py-2 text-xs font-medium flex items-center gap-2 border transition-colors whitespace-nowrap ${
+                    (rightPageNum || leftPageNum) >= kitab.totalPages
+                      ? 'opacity-40 cursor-not-allowed border-transparent'
+                      : settings.showHardwareBezel
+                      ? 'border-[#78350F] bg-[#78350F] hover:bg-[#9A3412] text-white'
+                      : 'border-[#1C1917] bg-[#1C1917] hover:bg-[#332E2A] text-white'
+                  }`}
+                >
+                  <span>Lembar Berikutnya</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
