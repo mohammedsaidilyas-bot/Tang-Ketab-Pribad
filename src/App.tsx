@@ -844,7 +844,7 @@ export function App() {
                             Rincian Katalog
                           </button>
 
-                          {item.isUploadedPdf && (
+                          {activePembaca === 'admin' && item.isUploadedPdf && (
                             <button
                               type="button"
                               onClick={() => handleDeleteKitab(item.id)}
