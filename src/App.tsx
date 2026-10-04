@@ -201,6 +201,9 @@ export function App() {
               const cloudK = map.get(k.id)!;
               map.set(k.id, {
                 ...cloudK,
+                bookmarks: cloudK.bookmarks || k.bookmarks || [],
+                pages: cloudK.pages || k.pages || [],
+                chapters: cloudK.chapters || k.chapters || [],
                 pdfBlobKey: k.pdfBlobKey || cloudK.pdfBlobKey,
               });
             }
@@ -501,8 +504,8 @@ export function App() {
     return true;
   });
 
-  const totalPagesAcrossLibrary = kitabs.reduce((acc, k) => acc + k.totalPages, 0);
-  const totalBookmarks = kitabs.reduce((acc, k) => acc + k.bookmarks.length, 0);
+  const totalPagesAcrossLibrary = kitabs.reduce((acc, k) => acc + (k.totalPages || 0), 0);
+  const totalBookmarks = kitabs.reduce((acc, k) => acc + (k.bookmarks?.length || 0), 0);
 
   if (!activePembaca) {
     return <ReaderSelector onSelect={handleSelectPembaca} />;
@@ -915,7 +918,7 @@ export function App() {
                             </span>
                             <span>{kitabNotesCount} Hasyiyah</span>
                           </div>
-                          {item.bookmarks.length > 0 && (
+                          {(item.bookmarks?.length || 0) > 0 && (
                             <span className="text-[#9A3412] flex items-center gap-1">
                               <Bookmark className="w-3 h-3 fill-[#9A3412]" />
                               Hal. {item.bookmarks.join(', ')}

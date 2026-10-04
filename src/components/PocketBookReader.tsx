@@ -907,14 +907,20 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     renderRightPageNum = rightPageNum;
   }
 
-  const leftPageData = kitab.pages.find((p) => p.pageNumber === renderLeftPageNum) || kitab.pages[0];
+  const defaultPage: KitabPage = {
+    pageNumber: renderLeftPageNum || 1,
+    chapterTitle: 'Memuat halaman...',
+    paragraphs: ['Teks halaman sedang disiapkan atau tidak ditemukan.'],
+  };
+
+  const leftPageData = (kitab.pages || []).find((p) => p.pageNumber === renderLeftPageNum) || (kitab.pages && kitab.pages[0]) || defaultPage;
   const rightPageData = renderRightPageNum
-    ? kitab.pages.find((p) => p.pageNumber === renderRightPageNum) || null
+    ? (kitab.pages || []).find((p) => p.pageNumber === renderRightPageNum) || { ...defaultPage, pageNumber: renderRightPageNum, chapterTitle: '' }
     : null;
 
-  const currentLeftPageData = kitab.pages.find((p) => p.pageNumber === leftPageNum) || null;
+  const currentLeftPageData = (kitab.pages || []).find((p) => p.pageNumber === leftPageNum) || null;
   const currentRightPageData = rightPageNum
-    ? kitab.pages.find((p) => p.pageNumber === rightPageNum) || null
+    ? (kitab.pages || []).find((p) => p.pageNumber === rightPageNum) || null
     : null;
 
   const visiblePageNumbers = rightPageNum ? [leftPageNum, rightPageNum] : [leftPageNum];
@@ -925,7 +931,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
   const searchMatches =
     inBookQuery.trim().length > 1
-      ? kitab.pages.filter((p) => {
+      ? (kitab.pages || []).filter((p) => {
           const q = inBookQuery.toLowerCase();
           return (
             p.chapterTitle.toLowerCase().includes(q) ||
