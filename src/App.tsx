@@ -146,8 +146,21 @@ export function App() {
   // Real-time Firestore sync and auto-migration of local kitabs to cloud
   useEffect(() => {
     // Push existing local kitabs to Firestore on boot so they appear in cloud
-    kitabs.forEach((k) => {
+    kitabs.forEach(async (k) => {
       if (k.isUploadedPdf) {
+        // If it's a local kitab missing a cloud URL, try to recover it from Storage
+        if (!k.pdfUrl) {
+          try {
+            const recoveredUrl = await getStoragePdfUrl(k.id);
+            if (recoveredUrl) {
+              k.pdfUrl = recoveredUrl;
+              // Save updated version locally too
+              setKitabs(prev => prev.map(item => item.id === k.id ? { ...item, pdfUrl: recoveredUrl } : item));
+            }
+          } catch (e) {
+            console.warn(`Failed to recover cloud URL for kitab ${k.id}:`, e);
+          }
+        }
         saveKitabToFirestore(k);
       }
     });
@@ -156,8 +169,18 @@ export function App() {
       if (cloudKitabs && cloudKitabs.length > 0) {
         setKitabs((prev) => {
           const map = new Map<string, KitabDocument>();
-          prev.forEach((k) => map.set(k.id, k));
+          // Start with cloud kitabs as the primary source
           cloudKitabs.forEach((k) => map.set(k.id, k));
+          // Merge local ones, but cloud version wins for shared fields
+          prev.forEach((k) => {
+            if (!map.has(k.id)) {
+              map.set(k.id, k);
+            } else {
+              const cloudK = map.get(k.id)!;
+              map.set(k.id, { ...k, ...cloudK });
+            }
+          });
+          
           return Array.from(map.values()).filter((k) => Boolean(k.isUploadedPdf));
         });
       }

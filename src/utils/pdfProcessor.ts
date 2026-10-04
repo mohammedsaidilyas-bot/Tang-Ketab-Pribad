@@ -91,11 +91,30 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
           await savePdfArrayBuffer(blobKey, buffer);
         }
       } else {
-        console.warn(`Fetch PDF failed with status: ${resp.status} ${resp.statusText}`);
+        console.warn(`Fetch PDF failed with status: ${resp.status} ${resp.statusText}. Will try direct PDF.js URL loading.`);
       }
     } catch (err) {
-      console.error('Error fetching PDF from URL (likely CORS or network):', urlOrRawBuffer, err);
-      // We don't throw here to allow caller to handle null doc
+      console.error('Error fetching PDF from URL (CORS or network):', urlOrRawBuffer, err);
+      // Fallback: try direct loading in PDF.js which might handle some cases better
+    }
+  }
+
+  // If we have a URL but no buffer, try direct loading
+  if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
+    try {
+      const task = pdfjsLib.getDocument({
+        url: urlOrRawBuffer,
+        cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/cmaps/`,
+        cMapPacked: true,
+        standardFontDataUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/standard_fonts/`,
+      });
+      const doc = await task.promise;
+      if (cacheKey) {
+        globalPdfDocCache.set(cacheKey, doc);
+      }
+      return doc;
+    } catch (err) {
+      console.warn('Failed direct PDF.js URL loading:', err);
     }
   }
 
@@ -2056,6 +2075,9 @@ export async function convertPdfFileToKitab(
       : `PDF Terunggah (${fileSizeKB} KB)`;
 
   const pdfUrl = await uploadPdfToStorage(kitabId, file);
+  if (!pdfUrl) {
+    throw new Error('Gagal mengunggah berkas PDF ke penyimpanan awan. Mohon periksa koneksi internet Anda.');
+  }
 
   return {
     id: kitabId,
