@@ -1273,30 +1273,6 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
         </div>
       </div>
 
-      {kitab.isUploadedPdf && !pdfDoc && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-2.5 mb-5 bg-[#FBF9F5] border border-[#DEC89B] text-xs text-[#78350F] shadow-2xs">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-4 h-4 shrink-0 text-[#78350F]" />
-            <span>
-              <strong>Mode Baca Teks Aktif:</strong> Berkas pindaian PDF asli belum dimuat di memori perangkat ini. Naskah langsung ditampilkan dalam mode teks.
-            </span>
-          </div>
-          <label className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#78350F] text-white font-medium hover:bg-[#5C280B] transition-colors cursor-pointer shrink-0 rounded-xs">
-            <Upload className="w-3.5 h-3.5" />
-            <span>Hubungkan File PDF Asli</span>
-            <input
-              type="file"
-              accept="application/pdf,.pdf"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleAttachPdfFile(file);
-              }}
-            />
-          </label>
-        </div>
-      )}
-
       {showSearchPopover && (
         <div className="mb-6 p-4 bg-[#F7F4EE] border border-[#D6CEBE]">
           <div className="flex items-center gap-3">
