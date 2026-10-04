@@ -80,7 +80,6 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
 
   if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
     try {
-      console.log('Attempting to fetch PDF from URL:', urlOrRawBuffer);
       const resp = await fetch(urlOrRawBuffer, {
         mode: 'cors',
         credentials: 'omit',

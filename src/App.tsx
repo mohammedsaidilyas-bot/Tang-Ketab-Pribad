@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   BookOpen,
   Upload,
@@ -18,7 +18,6 @@ import {
   NoteCategory,
   ReaderSettings,
 } from './types/kitab';
-import { DEFAULT_KITABS, DEFAULT_NOTES } from './data/defaultKitabs';
 import { PocketBookReader } from './components/PocketBookReader';
 import { PdfUploadModal } from './components/PdfUploadModal';
 import { ReaderSelector } from './components/ReaderSelector';
@@ -144,12 +143,18 @@ export function App() {
     setActivePembaca(role);
   };
 
+  const kitabsRef = useRef(kitabs);
+  useEffect(() => {
+    kitabsRef.current = kitabs;
+  }, [kitabs]);
+
   // Real-time Firestore sync and auto-migration of local kitabs to cloud
   useEffect(() => {
     let isCancelled = false;
 
     const healKitabs = async () => {
-      for (const k of kitabs) {
+      // Run on the initial set of kitabs
+      for (const k of kitabsRef.current) {
         if (isCancelled) break;
         if (k.isUploadedPdf) {
           let updated = false;
