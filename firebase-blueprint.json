@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "kitab": {
+      "title": "Kitab Document",
+      "description": "Definition of a Kitab",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "pdfUrl": { "type": "string" },
+        "addedBy": { "type": "string" }
+      },
+      "required": ["id", "title"]
+    },
+    "note": {
+      "title": "Hasyiyah Note",
+      "description": "Definition of a note",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "kitabId": { "type": "string" },
+        "userId": { "type": "string" },
+        "content": { "type": "string" },
+        "pageNumber": { "type": "number" }
+      },
+      "required": ["id", "kitabId", "userId", "content"]
+    }
+  },
+  "firestore": {
+    "kitabs": {
+      "schema": { "$ref": "kitab" },
+      "description": "Collection of all Kitabs"
+    },
+    "notes": {
+      "schema": { "$ref": "note" },
+      "description": "Collection of user notes"
+    }
+  }
+}

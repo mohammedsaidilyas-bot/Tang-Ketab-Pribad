@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin(uid) { return uid == 'YOUR_ADMIN_UID'; } // Ganti dengan UID Admin Anda nanti
+
+    match /kitabs/{kitabId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isAdmin(request.auth.uid);
+    }
+
+    match /notes/{noteId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+    }
+  }
+}
