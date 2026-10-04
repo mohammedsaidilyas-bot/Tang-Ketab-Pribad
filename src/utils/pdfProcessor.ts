@@ -295,8 +295,9 @@ export async function extractChaptersFromPdfDoc(pdfDoc: any): Promise<KitabChapt
         const startPage = await resolvePdfDestinationPage(item.dest, pdfDoc);
         const cleanTitle = item.title.replace(/\s+/g, ' ').trim();
         if (cleanTitle && startPage && startPage >= 1 && startPage <= pdfDoc.numPages) {
+          const stableIdSnippet = cleanTitle.slice(0, 10).replace(/[^a-zA-Z0-9]/g, '');
           chapters.push({
-            id: `ch-outline-${startPage}-${Math.random().toString(36).slice(2, 6)}`,
+            id: `ch-outline-${startPage}-${stableIdSnippet}`,
             number: String(chapters.length + 1).padStart(2, '0'),
             title: cleanTitle,
             startPage,

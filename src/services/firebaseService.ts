@@ -68,6 +68,7 @@ export async function getStoragePdfUrl(kitabId: string): Promise<string | null> 
 // Firestore CRUD helpers for Kitabs and Notes
 export async function saveKitabToFirestore(kitab: KitabDocument) {
   try {
+    console.log(`Firestore Write: Saving kitab "${kitab.title}" (${kitab.id})`);
     const docRef = doc(db, 'kitabs', kitab.id);
     let dataToSave = JSON.parse(JSON.stringify(kitab));
 

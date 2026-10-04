@@ -157,8 +157,8 @@ export function App() {
       for (const k of kitabsRef.current) {
         if (isCancelled) break;
         if (k.isUploadedPdf) {
-          let updated = false;
           let currentK = { ...k };
+          let updated = false;
 
           // 1. Try to recover missing cloud URL
           if (!currentK.pdfUrl) {
@@ -167,19 +167,23 @@ export function App() {
               if (recoveredUrl) {
                 currentK.pdfUrl = recoveredUrl;
                 updated = true;
+                console.log(`Recovered cloud URL for kitab: ${currentK.title}`);
               }
             } catch (e) {
               console.warn(`Failed to recover cloud URL for kitab ${currentK.id}:`, e);
             }
           }
 
-          // 2. Persist to Firestore if needed
-          await saveKitabToFirestore(currentK);
-
-          if (updated && !isCancelled) {
-            setKitabs((prev) =>
-              prev.map((item) => (item.id === currentK.id ? currentK : item))
-            );
+          // 2. Only persist to Firestore if we actually changed something (like recovering a URL)
+          // or if the kitab is entirely local (no pdfUrl at all but should have one).
+          // We avoid unconditional writes to prevent hitting Firestore quotas.
+          if (updated) {
+            await saveKitabToFirestore(currentK);
+            if (!isCancelled) {
+              setKitabs((prev) =>
+                prev.map((item) => (item.id === currentK.id ? currentK : item))
+              );
+            }
           }
         }
       }
@@ -408,10 +412,16 @@ export function App() {
 
   const handleUpdateChapters = (kitabId: string, chapters: KitabDocument['chapters']) => {
     setKitabs((prev) => {
-      const updated = prev.map((k) => (k.id === kitabId ? { ...k, chapters } : k));
-      const target = updated.find(k => k.id === kitabId);
-      if (target) saveKitabToFirestore(target);
-      return updated;
+      const existing = prev.find((k) => k.id === kitabId);
+      if (!existing) return prev;
+      
+      // Only write if chapters actually changed
+      const isSame = JSON.stringify(existing.chapters) === JSON.stringify(chapters);
+      if (isSame) return prev;
+
+      const updated = { ...existing, chapters };
+      saveKitabToFirestore(updated);
+      return prev.map((k) => (k.id === kitabId ? updated : k));
     });
   };
 
@@ -464,13 +474,20 @@ export function App() {
   };
 
   const handleUpdateKitab = (kitabId: string, partial: Partial<KitabDocument>) => {
-    setKitabs((prev) =>
-      prev.map((k) => (k.id === kitabId ? { ...k, ...partial } : k))
-    );
-    const fullKitab = kitabs.find((k) => k.id === kitabId);
-    if (fullKitab) {
-      saveKitabToFirestore({ ...fullKitab, ...partial });
-    }
+    setKitabs((prev) => {
+      const existing = prev.find((k) => k.id === kitabId);
+      if (!existing) return prev;
+
+      // Check if the partial update actually changes anything
+      const isNoop = Object.entries(partial).every(
+        ([key, value]) => JSON.stringify((existing as any)[key]) === JSON.stringify(value)
+      );
+      if (isNoop) return prev;
+
+      const updated = { ...existing, ...partial };
+      saveKitabToFirestore(updated);
+      return prev.map((k) => (k.id === kitabId ? updated : k));
+    });
   };
 
   const handleDeleteKitab = (kitabId: string) => {
