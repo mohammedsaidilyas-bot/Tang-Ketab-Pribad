@@ -416,7 +416,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
   useEffect(() => {
     let isCancelled = false;
-    if (kitab.isUploadedPdf && (kitab.pdfBlobKey || kitab.pdfUrl)) {
+    if (kitab.isUploadedPdf) {
       const activeKey = kitab.pdfBlobKey || kitab.pdfUrl || '';
       if (globalPdfDocCache.has(activeKey)) {
         const cached = globalPdfDocCache.get(activeKey);
@@ -425,11 +425,22 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
         }
         return;
       }
-      getOrLoadPdfDoc(kitab.pdfBlobKey, kitab.pdfUrl).then((doc) => {
+      
+      // Load from URL if available, then fallback to local
+      const loadPdf = async () => {
+        let doc = null;
+        if (kitab.pdfUrl) {
+          doc = await getOrLoadPdfDoc(kitab.pdfBlobKey, kitab.pdfUrl);
+        } else if (kitab.pdfBlobKey) {
+          doc = await getOrLoadPdfDoc(kitab.pdfBlobKey);
+        }
+        
         if (!isCancelled && doc) {
           setPdfDoc(doc);
         }
-      });
+      };
+      
+      loadPdf();
     }
     return () => {
       isCancelled = true;
