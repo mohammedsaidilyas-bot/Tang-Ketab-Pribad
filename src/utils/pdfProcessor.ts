@@ -1989,6 +1989,7 @@ export async function convertPdfFileToKitab(
     ];
   }
 
+  let currentChapterTitle = chapters[0]?.title || 'مقدمة الكتاب';
   const pages: KitabPage[] = Array.from({ length: numPages }, (_, index) => {
     const pageNumber = index + 1;
     const matchedOutlineChapter = chapters.find((ch) => ch.startPage === pageNumber);
