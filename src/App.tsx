@@ -607,14 +607,16 @@ export function App() {
                       </span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => setIsUploadModalOpen(true)}
-                      className="px-4 py-3 text-xs font-medium text-[#78350F] border border-[#78350F] bg-[#FBF9F5] hover:bg-[#78350F] hover:text-white transition-colors flex items-center gap-2 whitespace-nowrap"
-                    >
-                      <Upload className="w-4 h-4" />
-                      <span>Unggah PDF Kitab Baru</span>
-                    </button>
+                    {activePembaca === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => setIsUploadModalOpen(true)}
+                        className="px-4 py-3 text-xs font-medium text-[#78350F] border border-[#78350F] bg-[#FBF9F5] hover:bg-[#78350F] hover:text-white transition-colors flex items-center gap-2 whitespace-nowrap"
+                      >
+                        <Upload className="w-4 h-4" />
+                        <span>Unggah PDF Kitab Baru</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
