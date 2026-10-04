@@ -18,7 +18,7 @@ export function ReaderSelector({ onSelect }: ReaderSelectorProps) {
       {/* Content */}
       <div className="relative z-10 max-w-sm w-full space-y-12 text-center">
         <h1 className="text-5xl font-display font-bold tracking-tight text-white drop-shadow-lg">
-          Nusa Turots
+          TANG_KETAB
         </h1>
         
         <div className="grid gap-6">
