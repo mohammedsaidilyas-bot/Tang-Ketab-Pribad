@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { KitabChapter, KitabDocument, KitabPage } from '../types/kitab';
+import { uploadPdfToStorage } from '../services/firebaseService';
 
 // Configure PDF.js worker using local Vite asset URL
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -1859,6 +1860,7 @@ export async function convertPdfFileToKitab(
   const rawBuffer = await file.arrayBuffer();
   const storageBuffer = rawBuffer.slice(0);
   const pdfBlobKey = `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const kitabId = pdfBlobKey;
   await savePdfArrayBuffer(pdfBlobKey, storageBuffer);
 
   const uint8Data = new Uint8Array(rawBuffer);
@@ -2045,8 +2047,10 @@ export async function convertPdfFileToKitab(
       ? `PDF Terunggah (${(fileSizeKB / 1024).toFixed(1)} MB)`
       : `PDF Terunggah (${fileSizeKB} KB)`;
 
+  const pdfUrl = await uploadPdfToStorage(kitabId, file);
+
   return {
-    id: `kitab-pdf-${Date.now()}`,
+    id: kitabId,
     catalogNumber: `TK-PDF.${String(Math.floor(100 + Math.random() * 899))}`,
     title: options.customTitle?.trim() || cleanFileName || 'Kitab PDF Pribadi',
     subtitle:
@@ -2065,6 +2069,7 @@ export async function convertPdfFileToKitab(
     chapters,
     pages,
     pdfBlobKey,
+    pdfUrl,
   };
 }
 

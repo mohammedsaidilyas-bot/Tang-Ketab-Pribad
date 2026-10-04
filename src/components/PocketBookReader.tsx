@@ -37,6 +37,7 @@ import {
 import * as pdfjsLib from 'pdfjs-dist';
 import {
   renderPdfPageToCanvas,
+  savePdfArrayBuffer,
   loadPdfArrayBuffer,
   extractChaptersFromPdfDoc,
   detectOrGenerateKitabChapters,
@@ -126,31 +127,105 @@ const NOTE_CATEGORY_LABELS: Record<NoteCategory, string> = {
   muzakarah: 'Pertanyaan Muzakarah',
 };
 
+const pageCanvasBitmapCache = new Map<string, HTMLCanvasElement>();
+
+async function prefetchAdjacentPages(pdfDoc: any, currentPage: number, kitabId: string) {
+  if (!pdfDoc) return;
+  const pagesToPrefetch = [currentPage + 1, currentPage - 1, currentPage + 2].filter(
+    (p) => p >= 1 && p <= pdfDoc.numPages
+  );
+
+  for (const pNum of pagesToPrefetch) {
+    const key = `${kitabId}-${pNum}`;
+    if (pageCanvasBitmapCache.has(key)) continue;
+
+    try {
+      const page = await pdfDoc.getPage(pNum);
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const scale = 1.15 * dpr;
+      const viewport = page.getViewport({ scale });
+
+      const offscreen = document.createElement('canvas');
+      offscreen.width = viewport.width;
+      offscreen.height = viewport.height;
+      const ctx = offscreen.getContext('2d', { alpha: false });
+      if (ctx) {
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        pageCanvasBitmapCache.set(key, offscreen);
+      }
+    } catch {}
+  }
+}
+
 const PdfCanvasPage: React.FC<{
+  kitabId: string;
   pdfDoc: any;
   pageNumber: number;
-}> = ({ pdfDoc, pageNumber }) => {
+  pageData?: KitabPage;
+  themeStyle: any;
+  fontSize: number;
+  lineLeadingClass: string;
+  onAttachPdfFile?: (file: File) => void;
+}> = ({
+  kitabId,
+  pdfDoc,
+  pageNumber,
+  pageData,
+  themeStyle,
+  fontSize,
+  lineLeadingClass,
+  onAttachPdfFile,
+}) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<any>(null);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'ready' | 'fallback'>('loading');
+  const [isRendering, setIsRendering] = useState(false);
 
   useEffect(() => {
     let isCancelled = false;
 
     if (!pdfDoc) {
-      setStatus('loading');
-      return;
+      const timer = setTimeout(() => {
+        if (!isCancelled) {
+          setStatus('fallback');
+        }
+      }, 700);
+      return () => {
+        isCancelled = true;
+        clearTimeout(timer);
+      };
     }
+
     if (!canvasRef.current) {
-      setStatus('error');
-      return;
-    }
-    if (pageNumber < 1 || pageNumber > pdfDoc.numPages) {
-      setStatus('error');
+      setStatus('fallback');
       return;
     }
 
-    // Cancel any previous render task on this canvas before starting a new one
+    if (pageNumber < 1 || pageNumber > pdfDoc.numPages) {
+      setStatus('fallback');
+      return;
+    }
+
+    const cacheKey = `${kitabId}-${pageNumber}`;
+    if (pageCanvasBitmapCache.has(cacheKey)) {
+      const cached = pageCanvasBitmapCache.get(cacheKey)!;
+      const canvas = canvasRef.current;
+      if (canvas) {
+        canvas.width = cached.width;
+        canvas.height = cached.height;
+        canvas.style.width = '100%';
+        canvas.style.height = 'auto';
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(cached, 0, 0);
+          setStatus('ready');
+          setIsRendering(false);
+          prefetchAdjacentPages(pdfDoc, pageNumber, kitabId);
+          return;
+        }
+      }
+    }
+
     if (renderTaskRef.current) {
       try {
         renderTaskRef.current.cancel();
@@ -158,7 +233,7 @@ const PdfCanvasPage: React.FC<{
       renderTaskRef.current = null;
     }
 
-    setStatus('loading');
+    setIsRendering(true);
 
     const renderPage = async () => {
       try {
@@ -168,12 +243,15 @@ const PdfCanvasPage: React.FC<{
         const canvas = canvasRef.current;
         if (!canvas) return;
 
-        const dpr = window.devicePixelRatio || 1;
-        const scale = 1.35;
-        const viewport = page.getViewport({ scale: scale * Math.min(dpr, 2) });
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        const scale = 1.15 * dpr;
+        const viewport = page.getViewport({ scale });
         const context = canvas.getContext('2d', { alpha: false });
         if (!context) {
-          if (!isCancelled) setStatus('error');
+          if (!isCancelled) {
+            setStatus('fallback');
+            setIsRendering(false);
+          }
           return;
         }
 
@@ -184,7 +262,7 @@ const PdfCanvasPage: React.FC<{
 
         const renderContext = {
           canvasContext: context,
-          viewport: viewport,
+          viewport,
         };
 
         const renderTask = page.render(renderContext);
@@ -193,6 +271,20 @@ const PdfCanvasPage: React.FC<{
         await renderTask.promise;
         if (!isCancelled) {
           setStatus('ready');
+          setIsRendering(false);
+
+          try {
+            const offscreen = document.createElement('canvas');
+            offscreen.width = canvas.width;
+            offscreen.height = canvas.height;
+            const offCtx = offscreen.getContext('2d');
+            if (offCtx) {
+              offCtx.drawImage(canvas, 0, 0);
+              pageCanvasBitmapCache.set(cacheKey, offscreen);
+            }
+          } catch {}
+
+          prefetchAdjacentPages(pdfDoc, pageNumber, kitabId);
         }
       } catch (err: any) {
         if (err?.name === 'RenderingCancelledException') {
@@ -200,7 +292,8 @@ const PdfCanvasPage: React.FC<{
         }
         console.warn(`Error rendering PDF page ${pageNumber}:`, err);
         if (!isCancelled) {
-          setStatus('error');
+          setStatus('fallback');
+          setIsRendering(false);
         }
       }
     };
@@ -216,25 +309,73 @@ const PdfCanvasPage: React.FC<{
         renderTaskRef.current = null;
       }
     };
-  }, [pdfDoc, pageNumber]);
+  }, [pdfDoc, pageNumber, kitabId]);
 
   return (
-    <div className="relative w-full min-h-[360px] flex flex-col items-center justify-center bg-white/60 p-1 border border-[#D6CEBE]/50 shadow-xs overflow-hidden">
-      {status === 'loading' && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#FBF9F5]/70 backdrop-blur-xs py-12 text-xs text-[#57534E] font-mono-tabular">
-          <div className="w-5 h-5 border-2 border-[#78350F] border-t-transparent rounded-full animate-spin mb-2" />
-          <p>Menyiapkan Lembar {pageNumber}...</p>
+    <div className="relative w-full min-h-[360px] flex flex-col justify-start">
+      {isRendering && status !== 'ready' && (
+        <div className="w-full h-1 bg-[#D6CEBE]/40 overflow-hidden mb-2">
+          <div className="w-1/3 h-full bg-[#78350F] animate-pulse" />
         </div>
       )}
-      {status === 'error' && (
-        <div className="p-8 text-center text-xs text-[#9A3412] font-mono-tabular">
-          <p>Lembar {pageNumber} tidak dapat dimuat.</p>
-        </div>
-      )}
+
       <canvas
         ref={canvasRef}
-        className="max-w-full h-auto block shadow-2xs"
+        className={`max-w-full h-auto block shadow-2xs transition-opacity duration-150 ${
+          status === 'ready' ? 'opacity-100' : 'hidden'
+        }`}
       />
+
+      {status === 'fallback' && (
+        <div className="space-y-4 animate-fade-in py-2">
+          {pageData?.arabicMatan && (
+            <div dir="rtl" className={`p-4 border-r-2 border-[#78350F] ${themeStyle.matanBg}`}>
+              <p className="font-arabic text-xl leading-[2] text-right">{pageData.arabicMatan}</p>
+            </div>
+          )}
+
+          <div style={{ fontSize: `${fontSize}px` }} className={`space-y-3.5 ${lineLeadingClass}`}>
+            {pageData?.paragraphs &&
+            pageData.paragraphs.length > 0 &&
+            !pageData.paragraphs[0].startsWith('[Halaman') ? (
+              pageData.paragraphs.map((p, idx) => (
+                <p key={idx} className="text-justify text-xs sm:text-sm">
+                  {p}
+                </p>
+              ))
+            ) : (
+              <div className="py-8 text-center space-y-3 px-2">
+                <div className="inline-flex p-3 rounded-full bg-[#78350F]/10 text-[#78350F]">
+                  <BookOpen className="w-6 h-6" />
+                </div>
+                <h4 className="font-display font-semibold text-base text-[#1C1917]">
+                  {pageData?.chapterTitle || `Lembar Naskah ${pageNumber}`}
+                </h4>
+                <p className="text-xs text-[#57534E] max-w-sm mx-auto leading-relaxed">
+                  Pindaian visual PDF asli untuk lembar {pageNumber} belum tersimpan di memori perangkat ini. Hubungkan file PDF kitab Anda sekali saja untuk menampilkan lembaran visual PDF asli.
+                </p>
+                {onAttachPdfFile && (
+                  <div className="pt-2">
+                    <label className="inline-flex items-center gap-2 px-4 py-2 bg-[#78350F] text-white text-xs font-medium cursor-pointer hover:bg-[#5C280B] transition-colors shadow-xs rounded-xs">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Hubungkan File PDF Kitab Ini</span>
+                      <input
+                        type="file"
+                        accept="application/pdf,.pdf"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) onAttachPdfFile(file);
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -311,6 +452,20 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       isCancelled = true;
     };
   }, [kitab.pdfBlobKey, kitab.pdfUrl, kitab.isUploadedPdf]);
+
+  const handleAttachPdfFile = async (file: File) => {
+    try {
+      const buffer = await file.arrayBuffer();
+      const key = kitab.pdfBlobKey || `pdf-${Date.now()}`;
+      await savePdfArrayBuffer(key, buffer);
+      const loadingTask = createPdfLoadingTask(new Uint8Array(buffer));
+      const doc = await loadingTask.promise;
+      globalPdfDocCache.set(key, doc);
+      setPdfDoc(doc);
+    } catch (err) {
+      console.error('Failed to attach PDF on this device:', err);
+    }
+  };
 
   // Automatically extract authentic PDF outline / bookmarks on load, or generate intelligent chapters for this specific book
   useEffect(() => {
@@ -783,7 +938,16 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
           </header>
 
           {kitab.isUploadedPdf ? (
-            <PdfCanvasPage pdfDoc={pdfDoc} pageNumber={pageData.pageNumber} />
+            <PdfCanvasPage
+              kitabId={kitab.id}
+              pdfDoc={pdfDoc}
+              pageNumber={pageData.pageNumber}
+              pageData={pageData}
+              themeStyle={themeStyle}
+              fontSize={settings.fontSize}
+              lineLeadingClass={lineLeadingClass}
+              onAttachPdfFile={handleAttachPdfFile}
+            />
           ) : (
             <div className="space-y-4">
               {settings.showArabicMatan && pageData.arabicMatan && (
@@ -901,7 +1065,16 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
           )}
 
           {kitab.isUploadedPdf ? (
-            <PdfCanvasPage pdfDoc={pdfDoc} pageNumber={pageData.pageNumber} />
+            <PdfCanvasPage
+              kitabId={kitab.id}
+              pdfDoc={pdfDoc}
+              pageNumber={pageData.pageNumber}
+              pageData={pageData}
+              themeStyle={themeStyle}
+              fontSize={settings.fontSize}
+              lineLeadingClass={lineLeadingClass}
+              onAttachPdfFile={handleAttachPdfFile}
+            />
           ) : (
             <div className="space-y-5">
               {settings.showArabicMatan && pageData.arabicMatan && (
@@ -1099,6 +1272,30 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
           </button>
         </div>
       </div>
+
+      {kitab.isUploadedPdf && !pdfDoc && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-2.5 mb-5 bg-[#FBF9F5] border border-[#DEC89B] text-xs text-[#78350F] shadow-2xs">
+          <div className="flex items-center gap-2">
+            <BookOpen className="w-4 h-4 shrink-0 text-[#78350F]" />
+            <span>
+              <strong>Mode Baca Teks Aktif:</strong> Berkas pindaian PDF asli belum dimuat di memori perangkat ini. Naskah langsung ditampilkan dalam mode teks.
+            </span>
+          </div>
+          <label className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#78350F] text-white font-medium hover:bg-[#5C280B] transition-colors cursor-pointer shrink-0 rounded-xs">
+            <Upload className="w-3.5 h-3.5" />
+            <span>Hubungkan File PDF Asli</span>
+            <input
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleAttachPdfFile(file);
+              }}
+            />
+          </label>
+        </div>
+      )}
 
       {showSearchPopover && (
         <div className="mb-6 p-4 bg-[#F7F4EE] border border-[#D6CEBE]">

@@ -1,17 +1,34 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { KitabDocument, HasyiyahNote } from '../types/kitab';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+export const storage = getStorage(app);
 export const auth = getAuth(app);
 
 // Sign in anonymously on startup
 signInAnonymously(auth).catch((err) => {
   console.warn('Anonymous auth note:', err);
 });
+
+export async function uploadPdfToStorage(kitabId: string, file: File): Promise<string> {
+  const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
+  const snapshot = await uploadBytes(storageRef, file);
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function getStoragePdfUrl(kitabId: string): Promise<string | null> {
+  try {
+    const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
+    return await getDownloadURL(storageRef);
+  } catch (e) {
+    return null;
+  }
+}
 
 // Firestore CRUD helpers for Kitabs and Notes
 export async function saveKitabToFirestore(kitab: KitabDocument) {
