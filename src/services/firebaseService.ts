@@ -16,12 +16,17 @@ signInAnonymously(auth).catch((err) => {
 });
 
 export async function uploadPdfToStorage(kitabId: string, file: File): Promise<string> {
+  if (!storage) {
+    console.warn('Firebase Storage is not initialized.');
+    return '';
+  }
   const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
   const snapshot = await uploadBytes(storageRef, file);
   return getDownloadURL(snapshot.ref);
 }
 
 export async function getStoragePdfUrl(kitabId: string): Promise<string | null> {
+  if (!storage) return null;
   try {
     const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
     return await getDownloadURL(storageRef);
