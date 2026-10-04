@@ -10,11 +10,6 @@ export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
 export const storage = getStorage(app);
 export const auth = getAuth(app);
 
-// Sign in anonymously to ensure an identity for Firebase rules
-signInAnonymously(auth).catch((err) => {
-  console.error('Firebase anonymous auth failed:', err);
-});
-
 // Firestore CRUD helpers for Kitabs and Notes
 export async function uploadPdfToStorage(kitabId: string, file: File): Promise<string> {
   if (!storage) {
