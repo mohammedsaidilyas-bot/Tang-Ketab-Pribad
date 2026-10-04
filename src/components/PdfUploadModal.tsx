@@ -37,6 +37,10 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
       setErrorMsg('Mohon pilih berkas berformat .PDF untuk dikonversi menjadi PocketBook.');
       return;
     }
+    if (file.size > 50 * 1024 * 1024) {
+      setErrorMsg('Berkas terlalu besar (Maks. 50MB). Mohon gunakan berkas PDF yang lebih kecil agar proses muat cloud lancar.');
+      return;
+    }
     setSelectedFile(file);
     if (!customTitle) {
       const cleanName = file.name.replace(/\.pdf$/i, '').replace(/[-_]+/g, ' ');

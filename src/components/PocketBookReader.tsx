@@ -472,12 +472,12 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
           if (!isCancelled && doc) {
             setPdfDoc(doc);
           } else if (!isCancelled && !doc) {
-            setInitError(`Gagal mengambil dokumen PDF dari server. Berkas mungkin sudah dihapus, akses ditolak (CORS), atau koneksi terputus. (URL: ${kitab.pdfUrl?.substring(0, 40)}...)`);
+            setInitError('Sistem tidak menemukan berkas PDF asli di server cloud. Hal ini bisa terjadi jika koneksi terputus saat proses unggah sebelumnya.');
           }
         } catch (err: any) {
           clearTimeout(timeout);
           if (!isCancelled) {
-            setInitError(`Terjadi kesalahan teknis saat membuka PDF: ${err.message || 'Kesalahan jaringan'}. Mohon coba muat ulang halaman ini.`);
+            setInitError(`Terjadi hambatan teknis saat membuka PDF (${err.message || 'Masalah Jaringan'}). Silakan coba muat ulang atau gunakan tombol lampirkan manual di bawah.`);
           }
         }
       };
@@ -498,6 +498,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       const doc = await loadingTask.promise;
       globalPdfDocCache.set(key, doc);
       setPdfDoc(doc);
+      setInitError(null);
       
       // Also upload to cloud storage and update kitab in Firestore
       const url = await uploadPdfToStorage(kitab.id, file);
@@ -918,17 +919,33 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
             {initError}
           </p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-col sm:flex-row gap-4">
           <button
             onClick={() => window.location.reload()}
-            className="px-6 py-2.5 bg-[#1C1917] text-white text-xs font-semibold rounded-xs shadow-md hover:bg-[#44403C] flex items-center gap-2"
+            className="px-6 py-2.5 bg-[#1C1917] text-white text-xs font-semibold rounded-xs shadow-md hover:bg-[#44403C] flex items-center justify-center gap-2"
           >
             <RotateCw className="w-3.5 h-3.5" />
             Muat Ulang Aplikasi
           </button>
           <button
+            onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = 'application/pdf';
+              input.onchange = (e: any) => {
+                const file = e.target.files?.[0];
+                if (file) handleAttachPdfFile(file);
+              };
+              input.click();
+            }}
+            className="px-6 py-2.5 bg-[#78350F] text-white text-xs font-semibold rounded-xs shadow-md hover:bg-[#5C280B] flex items-center justify-center gap-2"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            Lampirkan Berkas PDF Manual
+          </button>
+          <button
             onClick={onBackToLibrary}
-            className="px-6 py-2.5 border border-[#D6CEBE] text-[#1C1917] text-xs font-semibold rounded-xs hover:bg-[#F3EFE6]"
+            className="px-6 py-2.5 border border-[#D6CEBE] text-[#1C1917] text-xs font-semibold rounded-xs hover:bg-[#F3EFE6] flex items-center justify-center"
           >
             Kembali ke Pustaka
           </button>

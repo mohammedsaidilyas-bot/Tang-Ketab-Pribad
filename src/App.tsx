@@ -188,6 +188,7 @@ export function App() {
     healKitabs();
 
     const unsubKitabs = subscribeToKitabs((cloudKitabs) => {
+      console.log('Received kitabs from cloud sync:', cloudKitabs.length);
       if (cloudKitabs && cloudKitabs.length > 0) {
         setKitabs((prev) => {
           const map = new Map<string, KitabDocument>();
