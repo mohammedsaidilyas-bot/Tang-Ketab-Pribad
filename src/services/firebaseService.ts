@@ -35,7 +35,20 @@ export async function getStoragePdfUrl(kitabId: string): Promise<string | null> 
 export async function saveKitabToFirestore(kitab: KitabDocument) {
   try {
     const docRef = doc(db, 'kitabs', kitab.id);
-    await setDoc(docRef, JSON.parse(JSON.stringify(kitab)));
+    let dataToSave = JSON.parse(JSON.stringify(kitab));
+
+    // Check for document size limit (1MB). If too big, prune the pages text
+    // as it's the largest part and we have the PDF file anyway.
+    const estimatedSize = JSON.stringify(dataToSave).length;
+    if (estimatedSize > 850000) { // ~850KB threshold to be safe
+      console.warn(`Kitab "${kitab.title}" document is large (${estimatedSize} bytes). Pruning page text to fit Firestore limit.`);
+      dataToSave.pages = dataToSave.pages.map((p: any) => ({
+        ...p,
+        paragraphs: [`[Teks halaman dikurangi demi sinkronisasi awan · Silakan baca visual PDF asli]`]
+      }));
+    }
+
+    await setDoc(docRef, dataToSave);
   } catch (e) {
     console.error('Error saving kitab to Firestore:', e);
   }

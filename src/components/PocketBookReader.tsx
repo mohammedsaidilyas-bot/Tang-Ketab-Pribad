@@ -189,7 +189,7 @@ const PdfCanvasPage: React.FC<{
         if (!isCancelled) {
           setStatus('fallback');
         }
-      }, 700);
+      }, 5000); // Increased from 700ms to 5s for slower network loads
       return () => {
         isCancelled = true;
         clearTimeout(timer);
@@ -354,6 +354,23 @@ const PdfCanvasPage: React.FC<{
                 <p className="text-xs text-[#57534E] max-w-sm mx-auto leading-relaxed">
                   Pindaian visual PDF asli untuk lembar {pageNumber} sedang dimuat ke memori perangkat ini.
                 </p>
+                <div className="pt-2">
+                  <button
+                    onClick={() => {
+                      const input = document.createElement('input');
+                      input.type = 'file';
+                      input.accept = 'application/pdf';
+                      input.onchange = (e: any) => {
+                        const file = e.target.files?.[0];
+                        if (file) onAttachPdfFile?.(file);
+                      };
+                      input.click();
+                    }}
+                    className="px-4 py-2 text-xs font-semibold text-[#78350F] border border-[#78350F]/30 hover:bg-[#78350F]/5 transition-colors"
+                  >
+                    Lampirkan Ulang Berkas PDF (Jika Gagal Memuat)
+                  </button>
+                </div>
               </div>
             )}
           </div>

@@ -3,8 +3,9 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { KitabChapter, KitabDocument, KitabPage } from '../types/kitab';
 import { uploadPdfToStorage } from '../services/firebaseService';
 
-// Configure PDF.js worker using local Vite asset URL
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+// Configure PDF.js worker using local Vite asset URL with CDN fallback
+const version = '4.10.38';
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl || `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
 
 const DB_NAME = 'tang_ketab_storage_v1';
 const STORE_NAME = 'pdf_blobs';
@@ -79,15 +80,22 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
 
   if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
     try {
-      const resp = await fetch(urlOrRawBuffer);
+      console.log('Attempting to fetch PDF from URL:', urlOrRawBuffer);
+      const resp = await fetch(urlOrRawBuffer, {
+        mode: 'cors',
+        credentials: 'omit',
+      });
       if (resp.ok) {
         buffer = await resp.arrayBuffer();
         if (blobKey) {
           await savePdfArrayBuffer(blobKey, buffer);
         }
+      } else {
+        console.warn(`Fetch PDF failed with status: ${resp.status} ${resp.statusText}`);
       }
     } catch (err) {
-      console.warn('Error fetching PDF from URL:', urlOrRawBuffer, err);
+      console.error('Error fetching PDF from URL (likely CORS or network):', urlOrRawBuffer, err);
+      // We don't throw here to allow caller to handle null doc
     }
   }
 
