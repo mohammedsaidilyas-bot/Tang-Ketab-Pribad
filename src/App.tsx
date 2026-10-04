@@ -23,6 +23,14 @@ import { PocketBookReader } from './components/PocketBookReader';
 import { PdfUploadModal } from './components/PdfUploadModal';
 import { ReaderSelector } from './components/ReaderSelector';
 import {
+  subscribeToKitabs,
+  subscribeToNotes,
+  saveKitabToFirestore,
+  deleteKitabFromFirestore,
+  saveNoteToFirestore,
+  deleteNoteFromFirestore,
+} from './services/firebaseService';
+import {
   detectOrGenerateKitabChapters,
   detectPdfCoverOffset,
   loadPdfArrayBuffer,
@@ -137,6 +145,24 @@ export function App() {
     localStorage.setItem('tang_ketab_active_pembaca', role);
     setActivePembaca(role);
   };
+
+  // Real-time Firestore sync for kitabs and notes across devices & sessions
+  useEffect(() => {
+    const unsubKitabs = subscribeToKitabs((cloudKitabs) => {
+      if (cloudKitabs && cloudKitabs.length > 0) {
+        setKitabs(cloudKitabs.filter((k) => Boolean(k.isUploadedPdf)));
+      }
+    });
+    const unsubNotes = subscribeToNotes((cloudNotes) => {
+      if (cloudNotes) {
+        setNotes(cloudNotes.filter((n) => !n.id.startsWith('note-default-')));
+      }
+    });
+    return () => {
+      unsubKitabs?.();
+      unsubNotes?.();
+    };
+  }, []);
  
   // Library Filter & Search states
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'pdf' | 'bookmarked'>('all');
@@ -342,14 +368,17 @@ export function App() {
       createdAt: `${formattedDate} · ${formattedTime}`,
     };
     setNotes((prev) => [newNote, ...prev]);
+    saveNoteToFirestore(newNote);
   };
 
   const handleDeleteNote = (noteId: string) => {
     setNotes((prev) => prev.filter((n) => n.id !== noteId));
+    deleteNoteFromFirestore(noteId);
   };
 
   const handleKitabCreated = (newKitab: KitabDocument) => {
     setKitabs((prev) => [newKitab, ...prev]);
+    saveKitabToFirestore(newKitab);
     setActiveKitabId(newKitab.id);
     setCatalogKitabId(newKitab.id);
     setActiveTab('reader');
@@ -358,6 +387,8 @@ export function App() {
   const handleDeleteKitab = (kitabId: string) => {
     const filtered = kitabs.filter((k) => k.id !== kitabId);
     setKitabs(filtered);
+    deleteKitabFromFirestore(kitabId);
+    notes.filter((n) => n.kitabId === kitabId).forEach((n) => deleteNoteFromFirestore(n.id));
     setNotes((prev) => prev.filter((n) => n.kitabId !== kitabId));
     if (activeKitabId === kitabId) {
       setActiveKitabId(filtered[0]?.id || '');
