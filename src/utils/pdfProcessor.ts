@@ -223,6 +223,7 @@ export interface PdfConversionOptions {
   coverTone?: KitabDocument['coverTone'];
   password?: string;
   onProgress?: (currentPage: number, totalPages: number) => void;
+  onUploadProgress?: (percent: number) => void;
 }
 
 /**
@@ -2085,7 +2086,7 @@ export async function convertPdfFileToKitab(
     options.onProgress(numPages, numPages);
   }
 
-  const pdfUrl = await uploadPdfToStorage(kitabId, file);
+  const pdfUrl = await uploadPdfToStorage(kitabId, file, options.onUploadProgress);
   if (!pdfUrl) {
     throw new Error('Gagal mengunggah berkas PDF ke penyimpanan awan. Mohon periksa koneksi internet Anda.');
   }

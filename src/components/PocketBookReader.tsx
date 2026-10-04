@@ -14,6 +14,7 @@ import {
   Eye,
   Trash2,
   Check,
+  FileText,
   Smartphone,
   Upload,
   Edit3,
@@ -425,6 +426,15 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   const [isScanningPdfToc, setIsScanningPdfToc] = useState(false);
   const [tocUpdateSuccessToast, setTocUpdateSuccessToast] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  const [copySuccess, setCopySuccess] = useState<number | null>(null);
+
+  const handleCopyPageText = (pageNumber: number, paragraphs: string[]) => {
+    const text = paragraphs.join('\n\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopySuccess(pageNumber);
+      setTimeout(() => setCopySuccess(null), 2000);
+    });
+  };
 
   const [showSearchPopover, setShowSearchPopover] = useState(false);
   const [inBookQuery, setInBookQuery] = useState('');
@@ -1145,6 +1155,20 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                   className={`w-3.5 h-3.5 ${isBookmarked ? 'fill-[#9A3412]' : ''}`}
                 />
                 <span>{isBookmarked ? 'Ditandai' : 'Tandai'}</span>
+              </button>
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={() => handleCopyPageText(pageData.pageNumber, pageData.paragraphs || [])}
+                className="flex items-center gap-1 text-xs hover:opacity-80 transition-colors"
+                title="Salin teks halaman ini ke clipboard agar bisa ditempel ke Word/WA"
+              >
+                {copySuccess === pageData.pageNumber ? (
+                  <Check className="w-3.5 h-3.5 text-green-600" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5" />
+                )}
+                <span>{copySuccess === pageData.pageNumber ? 'Tersalin' : 'Salin Teks'}</span>
               </button>
               <span aria-hidden="true">·</span>
               <span className="font-mono-tabular">Hal. {pageData.pageNumber}</span>

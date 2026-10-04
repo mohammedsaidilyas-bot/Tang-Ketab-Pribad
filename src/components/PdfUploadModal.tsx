@@ -22,7 +22,12 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
   const [password, setPassword] = useState('');
   const [requiresPassword, setRequiresPassword] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
-  const [progress, setProgress] = useState<{ current: number; total: number; status?: 'converting' | 'uploading' } | null>(null);
+  const [progress, setProgress] = useState<{ 
+    current: number; 
+    total: number; 
+    status?: 'converting' | 'uploading';
+    percent?: number;
+  } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -75,11 +80,14 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
         password: password.trim() || undefined,
         onProgress: (current, total) => {
           if (current === total) {
-            setProgress({ current, total, status: 'uploading' });
+            setProgress({ current, total, status: 'uploading', percent: 0 });
           } else {
             setProgress({ current, total, status: 'converting' });
           }
         },
+        onUploadProgress: (percent) => {
+          setProgress(prev => prev ? { ...prev, status: 'uploading', percent: Math.round(percent) } : null);
+        }
       });
       setIsConverting(false);
       onKitabCreated(newKitab);
@@ -305,14 +313,18 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
                     : 'Menyusun lembaran PocketBook dari PDF...'}
                 </span>
                 <span className="font-mono-tabular">
-                  {progress.status === 'uploading' ? 'Langkah Terakhir' : `Halaman ${progress.current} / ${progress.total}`}
+                  {progress.status === 'uploading' 
+                    ? (progress.percent !== undefined ? `Mengunggah ${progress.percent}%` : 'Langkah Terakhir') 
+                    : `Halaman ${progress.current} / ${progress.total}`}
                 </span>
               </div>
               <div className="w-full h-1.5 bg-[#E5DEC9] overflow-hidden">
                 <div
-                  className={`h-full transition-all duration-300 origin-left ${progress.status === 'uploading' ? 'bg-[#14532D] animate-pulse' : 'bg-[#78350F]'}`}
+                  className={`h-full transition-all duration-300 origin-left ${progress.status === 'uploading' ? 'bg-[#14532D]' : 'bg-[#78350F]'}`}
                   style={{
-                    transform: progress.status === 'uploading' ? 'scaleX(1)' : `scaleX(${Math.max(0.08, progress.current / Math.max(1, progress.total))})`,
+                    transform: progress.status === 'uploading' 
+                      ? `scaleX(${Math.max(0.01, (progress.percent || 0) / 100)})` 
+                      : `scaleX(${Math.max(0.08, progress.current / Math.max(1, progress.total))})`,
                   }}
                 />
               </div>

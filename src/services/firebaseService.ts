@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { KitabDocument, HasyiyahNote } from '../types/kitab';
 
@@ -11,7 +11,11 @@ export const storage = getStorage(app);
 export const auth = getAuth(app);
 
 // Firestore CRUD helpers for Kitabs and Notes
-export async function uploadPdfToStorage(kitabId: string, file: File): Promise<string> {
+export async function uploadPdfToStorage(
+  kitabId: string, 
+  file: File, 
+  onProgress?: (percent: number) => void
+): Promise<string> {
   if (!storage) {
     console.warn('Firebase Storage is not initialized.');
     return '';
@@ -19,16 +23,32 @@ export async function uploadPdfToStorage(kitabId: string, file: File): Promise<s
   try {
     console.log(`Starting PDF upload for kitab: ${kitabId}, size: ${file.size} bytes`);
     const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
-    const snapshot = await uploadBytes(storageRef, file, {
+    
+    const uploadTask = uploadBytesResumable(storageRef, file, {
       contentType: 'application/pdf',
       customMetadata: {
         originalName: file.name,
         uploadedAt: new Date().toISOString()
       }
     });
-    const url = await getDownloadURL(snapshot.ref);
-    console.log(`PDF upload successful. URL: ${url}`);
-    return url;
+
+    return new Promise((resolve, reject) => {
+      uploadTask.on('state_changed', 
+        (snapshot) => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          if (onProgress) onProgress(progress);
+        }, 
+        (error) => {
+          console.error('Upload failed:', error);
+          reject(new Error(`Gagal mengunggah PDF: ${error.message}`));
+        }, 
+        async () => {
+          const url = await getDownloadURL(uploadTask.snapshot.ref);
+          console.log(`PDF upload successful. URL: ${url}`);
+          resolve(url);
+        }
+      );
+    });
   } catch (e: any) {
     console.error('Error in uploadPdfToStorage:', e);
     throw new Error(`Gagal mengunggah PDF: ${e.message || 'Kesalahan jaringan'}`);
