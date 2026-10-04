@@ -1989,81 +1989,19 @@ export async function convertPdfFileToKitab(
     ];
   }
 
-  const pages: KitabPage[] = [];
-  let currentChapterTitle = chapters[0]?.title || 'مقدمة الكتاب';
-
-  // For high performance and crash-prevention on large PDFs (e.g. 500+ pages),
-  // extract text content deeply for up to first 40 pages, while preserving
-  // full canvas visual rendering for all pages.
-  const maxPagesToExtractText = Math.min(numPages, 40);
-
-  for (let i = 1; i <= numPages; i++) {
-    if (options.onProgress) {
-      options.onProgress(i, numPages);
-    }
-
-    const matchedOutlineChapter = chapters.find((ch) => ch.startPage === i);
+  const pages: KitabPage[] = Array.from({ length: numPages }, (_, index) => {
+    const pageNumber = index + 1;
+    const matchedOutlineChapter = chapters.find((ch) => ch.startPage === pageNumber);
     if (matchedOutlineChapter) {
       currentChapterTitle = matchedOutlineChapter.title;
     }
-
-    const paragraphs: string[] = [];
-
-    if (i <= maxPagesToExtractText) {
-      try {
-        const page = await pdfDoc.getPage(i);
-        const textContent = await page.getTextContent();
-
-        const lineBuckets: { y: number; text: string }[] = [];
-        for (const item of textContent.items) {
-          if ('str' in item && item.str.trim().length > 0) {
-            const y = Math.round(item.transform[5]);
-            const existing = lineBuckets.find((b) => Math.abs(b.y - y) <= 5);
-            if (existing) {
-              existing.text += (existing.text.endsWith(' ') ? '' : ' ') + item.str;
-            } else {
-              lineBuckets.push({ y, text: item.str });
-            }
-          }
-        }
-
-        lineBuckets.sort((a, b) => b.y - a.y);
-        const rawLines = lineBuckets.map((b) => b.text.replace(/\s+/g, ' ').trim()).filter(Boolean);
-
-        let bufferParagraph = '';
-        for (const line of rawLines) {
-          if (!bufferParagraph) {
-            bufferParagraph = line;
-          } else if (bufferParagraph.length < 260 && !/[.!?:”"']$/.test(bufferParagraph)) {
-            bufferParagraph += ' ' + line;
-          } else if (bufferParagraph.length < 180) {
-            bufferParagraph += ' ' + line;
-          } else {
-            paragraphs.push(bufferParagraph);
-            bufferParagraph = line;
-          }
-        }
-        if (bufferParagraph) {
-          paragraphs.push(bufferParagraph);
-        }
-      } catch (pageErr) {
-        console.warn(`Text extraction skipped for page ${i}:`, pageErr);
-      }
-    }
-
-    if (paragraphs.length === 0) {
-      paragraphs.push(
-        `[Halaman ${i} · Naskah Kitab Dokumen PDF Asli]`
-      );
-    }
-
-    pages.push({
-      pageNumber: i,
+    return {
+      pageNumber,
       chapterTitle: currentChapterTitle,
-      paragraphs,
-      footnote: `Diekstrak dari berkas PDF "${file.name}" · Lembar ${i} dari ${numPages}`,
-    });
-  }
+      paragraphs: [`[Halaman ${pageNumber} · Dokumen PDF Asli]`],
+      footnote: `Diekstrak dari berkas PDF "${file.name}" · Lembar ${pageNumber} dari ${numPages}`,
+    };
+  });
 
   // 3. If still <= 1 chapter, run smart detector for this specific book
   if (chapters.length <= 1) {

@@ -511,6 +511,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
   const handleAttachPdfFile = async (file: File) => {
     try {
+      setLoadingStatus('Menyimpan lembaran PDF secara lokal...');
       const buffer = await file.arrayBuffer();
       const key = kitab.pdfBlobKey || `pdf-${Date.now()}`;
       await savePdfArrayBuffer(key, buffer);
@@ -520,13 +521,22 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       setPdfDoc(doc);
       setInitError(null);
       
-      // Also upload to cloud storage and update kitab in Firestore
-      const url = await uploadPdfToStorage(kitab.id, file);
+      setLoadingStatus('Mengunggah berkas ke server cloud agar bisa dibaca perangkat lain...');
+      const url = await uploadPdfToStorage(kitab.id, file, (percent) => {
+        setLoadingStatus(`Mengunggah ke cloud: ${Math.round(percent)}%`);
+      });
+
+      setLoadingStatus(null);
       if (url && onUpdateKitab) {
         onUpdateKitab(kitab.id, { pdfUrl: url, pdfBlobKey: key });
+        alert('Berhasil! Berkas PDF Fathul Muin telah berhasil diunggah ke cloud dan siap dibaca di semua perangkat.');
+      } else {
+        alert('Peringatan: Berkas tersimpan di perangkat ini, namun gagal mendapatkan URL cloud. Silakan coba klik Rekonsiliasi Awan atau unggah ulang.');
       }
-    } catch (err) {
+    } catch (err: any) {
+      setLoadingStatus(null);
       console.error('Failed to attach PDF on this device:', err);
+      alert(`Gagal mengunggah berkas ke cloud: ${err.message || 'Masalah Jaringan'}. Pastikan koneksi internet stabil.`);
     }
   };
 
