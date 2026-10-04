@@ -137,25 +137,39 @@ export function App() {
   const [activeKitabId, setActiveKitabId] = useState<string>(kitabs[0]?.id || '');
   const [catalogKitabId, setCatalogKitabId] = useState<string>(kitabs[0]?.id || '');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [activePembaca, setActivePembaca] = useState<string | null>(() => {
-    return localStorage.getItem('tang_ketab_active_pembaca');
-  });
+  const [activePembaca, setActivePembaca] = useState<string | null>(null);
 
   const handleSelectPembaca = (role: 'pembaca' | 'admin') => {
-    localStorage.setItem('tang_ketab_active_pembaca', role);
     setActivePembaca(role);
   };
 
-  // Real-time Firestore sync for kitabs and notes across devices & sessions
+  // Real-time Firestore sync and auto-migration of local kitabs to cloud
   useEffect(() => {
+    // Push existing local kitabs to Firestore on boot so they appear in cloud
+    kitabs.forEach((k) => {
+      if (k.isUploadedPdf) {
+        saveKitabToFirestore(k);
+      }
+    });
+
     const unsubKitabs = subscribeToKitabs((cloudKitabs) => {
       if (cloudKitabs && cloudKitabs.length > 0) {
-        setKitabs(cloudKitabs.filter((k) => Boolean(k.isUploadedPdf)));
+        setKitabs((prev) => {
+          const map = new Map<string, KitabDocument>();
+          prev.forEach((k) => map.set(k.id, k));
+          cloudKitabs.forEach((k) => map.set(k.id, k));
+          return Array.from(map.values()).filter((k) => Boolean(k.isUploadedPdf));
+        });
       }
     });
     const unsubNotes = subscribeToNotes((cloudNotes) => {
-      if (cloudNotes) {
-        setNotes(cloudNotes.filter((n) => !n.id.startsWith('note-default-')));
+      if (cloudNotes && cloudNotes.length > 0) {
+        setNotes((prev) => {
+          const map = new Map<string, HasyiyahNote>();
+          prev.forEach((n) => map.set(n.id, n));
+          cloudNotes.forEach((n) => map.set(n.id, n));
+          return Array.from(map.values()).filter((n) => !n.id.startsWith('note-default-'));
+        });
       }
     });
     return () => {
@@ -508,10 +522,9 @@ export function App() {
           <button
             type="button"
             onClick={() => {
-              localStorage.removeItem('tang_ketab_active_pembaca');
-              window.location.reload();
+              setActivePembaca(null);
             }}
-            className="px-3 py-1.5 text-xs font-medium text-[#78350F] bg-[#D6CEBE]/40 hover:bg-[#D6CEBE]/60 transition-colors rounded-xs whitespace-nowrap"
+            className="px-3 py-1.5 text-xs font-medium text-[#78350F] bg-[#D6CEBE]/40 hover:bg-[#D6CEBE]/60 transition-colors rounded-xs whitespace-nowrap cursor-pointer"
           >
             Ganti Peran (Keluar)
           </button>
