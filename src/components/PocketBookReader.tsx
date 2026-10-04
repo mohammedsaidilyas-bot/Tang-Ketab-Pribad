@@ -65,6 +65,7 @@ interface PocketBookReaderProps {
   onDeleteNote: (noteId: string) => void;
   onOpenUploadModal?: () => void;
   onBackToLibrary: () => void;
+  isAdmin?: boolean;
 }
 
 const THEME_STYLES: Record<
@@ -967,22 +968,24 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
             <RotateCw className="w-3.5 h-3.5" />
             Muat Ulang Aplikasi
           </button>
-          <button
-            onClick={() => {
-              const input = document.createElement('input');
-              input.type = 'file';
-              input.accept = 'application/pdf';
-              input.onchange = (e: any) => {
-                const file = e.target.files?.[0];
-                if (file) handleAttachPdfFile(file);
-              };
-              input.click();
-            }}
-            className="px-6 py-2.5 bg-[#78350F] text-white text-xs font-semibold rounded-xs shadow-md hover:bg-[#5C280B] flex items-center justify-center gap-2"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            Lampirkan Berkas PDF Manual
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'application/pdf';
+                input.onchange = (e: any) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleAttachPdfFile(file);
+                };
+                input.click();
+              }}
+              className="px-6 py-2.5 bg-[#78350F] text-white text-xs font-semibold rounded-xs shadow-md hover:bg-[#5C280B] flex items-center justify-center gap-2"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Lampirkan Berkas PDF Manual
+            </button>
+          )}
           <button
             onClick={onBackToLibrary}
             className="px-6 py-2.5 border border-[#D6CEBE] text-[#1C1917] text-xs font-semibold rounded-xs hover:bg-[#F3EFE6] flex items-center justify-center"

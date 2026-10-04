@@ -572,30 +572,33 @@ export function App() {
       {/* Strict 3-Zone Top Bar Contract */}
       <header className="sticky top-0 z-40 flex items-center justify-between px-4 sm:px-8 py-4 border-b border-[#D6CEBE] bg-[#FBF9F5]/95 backdrop-blur-xs">
         {/* Zone 1: Brand Title (Single text element in display face) */}
-        <a
-          href="#pustaka"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveTab('pustaka');
-          }}
-          className="text-2xl sm:text-3xl font-display font-bold tracking-tight text-[#1C1917] whitespace-nowrap shrink-0"
-        >
-          Tang Ketab Pocket
-        </a>
-
-        {/* Zone 2: 4 Clean Navigation Links */}
-        <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-[#57534E]">
+        <div className="flex items-center gap-3">
+          <a
+            href="#pustaka"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveTab('pustaka');
+            }}
+            className="text-2xl sm:text-3xl font-display font-bold tracking-tight text-[#1C1917] whitespace-nowrap shrink-0"
+          >
+            Tang Ketab Pocket
+          </a>
           {activePembaca === 'admin' && (
             <button
               type="button"
               onClick={handleManualSync}
-              className="py-1 px-3 bg-[#F3EFE6] text-[#78350F] border border-[#78350F]/20 rounded-full text-[10px] uppercase tracking-widest font-bold hover:bg-[#78350F] hover:text-white transition-all flex items-center gap-1.5 shadow-2xs"
+              className="py-1 px-2.5 bg-[#F3EFE6] text-[#78350F] border border-[#78350F]/20 rounded-full text-[9px] uppercase tracking-wider font-bold hover:bg-[#78350F] hover:text-white transition-all flex items-center gap-1 shadow-2xs"
               title="Perbaiki & Sinkronisasi ulang semua link PDF ke cloud"
             >
               <RotateCw className="w-3 h-3" />
-              <span>Rekonsiliasi Awan</span>
+              <span className="hidden sm:inline">Rekonsiliasi Awan</span>
+              <span className="sm:hidden">Sync</span>
             </button>
           )}
+        </div>
+
+        {/* Zone 2: 4 Clean Navigation Links */}
+        <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-[#57534E]">
           <button
             type="button"
             onClick={() => setActiveTab('pustaka')}
@@ -1072,6 +1075,7 @@ export function App() {
               onDeleteNote={handleDeleteNote}
               onOpenUploadModal={activePembaca === 'admin' ? () => setIsUploadModalOpen(true) : undefined}
               onBackToLibrary={() => setActiveTab('pustaka')}
+              isAdmin={activePembaca === 'admin'}
             />
           ) : (
             <div className="max-w-xl mx-auto px-4 py-20 text-center space-y-5">
