@@ -1,16 +1,14 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { KitabDocument, HasyiyahNote } from '../types/kitab';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const storage = getStorage(app);
 export const auth = getAuth(app);
 
-// Authenticate anonymously so Firebase Storage and Firestore requests have valid credentials
+// Authenticate anonymously so Firebase Storage has valid credentials
 signInAnonymously(auth).catch((err) => {
   console.log('[Auth] Anonymous authentication note:', err?.message || err);
 });
@@ -121,86 +119,103 @@ export async function getStoragePdfUrl(kitabId: string): Promise<string | null> 
   return null;
 }
 
+// Quota-free Server-Side JSON Registry Persistence for Kitabs & Notes
 export async function saveKitabToFirestore(kitab: KitabDocument) {
   try {
-    console.log(`Firestore Write: Saving kitab "${kitab.title}" (${kitab.id}). Cloud PDF: ${!!kitab.pdfUrl}`);
-    const docRef = doc(db, 'kitabs', kitab.id);
-    let dataToSave = JSON.parse(JSON.stringify(kitab));
-
-    // Ensure we don't accidentally save local blob keys to cloud if they shouldn't be there
-    // but we MUST save the pdfUrl
-    if (kitab.pdfUrl) {
-      dataToSave.pdfUrl = kitab.pdfUrl;
+    console.log(`[Server Storage] Saving kitab "${kitab.title}" (${kitab.id}) to quota-free server registry.`);
+    const resp = await fetch('/api/kitabs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(kitab),
+    });
+    if (!resp.ok) {
+      console.warn('Failed to save kitab to server registry:', resp.statusText);
     }
-
-    // Check for document size limit (1MB). If too big, prune the pages text
-    // as it's the largest part and we have the PDF file anyway.
-    const estimatedSize = JSON.stringify(dataToSave).length;
-    if (estimatedSize > 850000) { // ~850KB threshold to be safe
-      console.warn(`Kitab "${kitab.title}" document is large (${estimatedSize} bytes). Pruning page text to fit Firestore limit.`);
-      dataToSave.pages = dataToSave.pages.map((p: any) => ({
-        ...p,
-        paragraphs: [`[Teks halaman dikurangi demi sinkronisasi awan · Silakan baca visual PDF asli]`]
-      }));
-    }
-
-    await setDoc(docRef, dataToSave);
   } catch (e) {
-    console.error('Error saving kitab to Firestore:', e);
+    console.error('Error saving kitab to server registry:', e);
   }
 }
 
 export async function deleteKitabFromFirestore(kitabId: string) {
   try {
-    const docRef = doc(db, 'kitabs', kitabId);
-    await deleteDoc(docRef);
+    await fetch(`/api/kitabs/${encodeURIComponent(kitabId)}`, {
+      method: 'DELETE',
+    });
   } catch (e) {
-    console.error('Error deleting kitab from Firestore:', e);
+    console.error('Error deleting kitab from server registry:', e);
   }
 }
 
 export async function saveNoteToFirestore(note: HasyiyahNote) {
   try {
-    const docRef = doc(db, 'notes', note.id);
-    await setDoc(docRef, JSON.parse(JSON.stringify(note)));
+    await fetch('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(note),
+    });
   } catch (e) {
-    console.error('Error saving note to Firestore:', e);
+    console.error('Error saving note to server registry:', e);
   }
 }
 
 export async function deleteNoteFromFirestore(noteId: string) {
   try {
-    const docRef = doc(db, 'notes', noteId);
-    await deleteDoc(docRef);
+    await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
+      method: 'DELETE',
+    });
   } catch (e) {
-    console.error('Error deleting note from Firestore:', e);
+    console.error('Error deleting note from server registry:', e);
   }
 }
 
 export function subscribeToKitabs(callback: (kitabs: KitabDocument[]) => void) {
-  const colRef = collection(db, 'kitabs');
-  return onSnapshot(colRef, (snapshot) => {
-    const items: KitabDocument[] = [];
-    snapshot.forEach((docSnap) => {
-      items.push(docSnap.data() as KitabDocument);
-    });
-    if (items.length > 0) {
-      callback(items);
+  let isCancelled = false;
+
+  const fetchKitabs = async () => {
+    try {
+      const resp = await fetch('/api/kitabs');
+      if (resp.ok) {
+        const items: KitabDocument[] = await resp.json();
+        if (!isCancelled && Array.isArray(items) && items.length > 0) {
+          callback(items);
+        }
+      }
+    } catch (err) {
+      console.warn('Kitabs sync polling warning:', err);
     }
-  }, (err) => {
-    console.warn('Firestore kitabs sync warning:', err);
-  });
+  };
+
+  fetchKitabs();
+  const interval = setInterval(fetchKitabs, 4000);
+
+  return () => {
+    isCancelled = true;
+    clearInterval(interval);
+  };
 }
 
 export function subscribeToNotes(callback: (notes: HasyiyahNote[]) => void) {
-  const colRef = collection(db, 'notes');
-  return onSnapshot(colRef, (snapshot) => {
-    const items: HasyiyahNote[] = [];
-    snapshot.forEach((docSnap) => {
-      items.push(docSnap.data() as HasyiyahNote);
-    });
-    callback(items);
-  }, (err) => {
-    console.warn('Firestore notes sync warning:', err);
-  });
+  let isCancelled = false;
+
+  const fetchNotes = async () => {
+    try {
+      const resp = await fetch('/api/notes');
+      if (resp.ok) {
+        const items: HasyiyahNote[] = await resp.json();
+        if (!isCancelled && Array.isArray(items)) {
+          callback(items);
+        }
+      }
+    } catch (err) {
+      console.warn('Notes sync polling warning:', err);
+    }
+  };
+
+  fetchNotes();
+  const interval = setInterval(fetchNotes, 4000);
+
+  return () => {
+    isCancelled = true;
+    clearInterval(interval);
+  };
 }

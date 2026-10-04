@@ -12,6 +12,125 @@ async function startServer() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
+  const kitabsJsonPath = path.join(uploadsDir, 'kitabs_registry.json');
+  const notesJsonPath = path.join(uploadsDir, 'notes_registry.json');
+
+  // Ensure registry files exist
+  if (!fs.existsSync(kitabsJsonPath)) {
+    fs.writeFileSync(kitabsJsonPath, JSON.stringify([], null, 2));
+  }
+  if (!fs.existsSync(notesJsonPath)) {
+    fs.writeFileSync(notesJsonPath, JSON.stringify([], null, 2));
+  }
+
+  app.use(express.json({ limit: '50mb' }));
+
+  // Kitabs Registry API
+  app.get('/api/kitabs', (req, res) => {
+    try {
+      const data = fs.readFileSync(kitabsJsonPath, 'utf8');
+      res.json(JSON.parse(data || '[]'));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/kitabs', (req, res) => {
+    try {
+      const kitab = req.body;
+      if (!kitab || !kitab.id) {
+        return res.status(400).json({ error: 'Invalid kitab object' });
+      }
+      const raw = fs.readFileSync(kitabsJsonPath, 'utf8');
+      let kitabs: any[] = [];
+      try { kitabs = JSON.parse(raw || '[]'); } catch {}
+
+      const index = kitabs.findIndex((k: any) => k.id === kitab.id);
+      if (index >= 0) {
+        kitabs[index] = { ...kitabs[index], ...kitab };
+      } else {
+        kitabs.unshift(kitab);
+      }
+
+      fs.writeFileSync(kitabsJsonPath, JSON.stringify(kitabs, null, 2));
+      console.log(`[Server] Saved kitab "${kitab.title}" to disk registry.`);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/kitabs/:id', (req, res) => {
+    try {
+      const kitabId = req.params.id;
+      const raw = fs.readFileSync(kitabsJsonPath, 'utf8');
+      let kitabs: any[] = [];
+      try { kitabs = JSON.parse(raw || '[]'); } catch {}
+
+      kitabs = kitabs.filter((k: any) => k.id !== kitabId);
+      fs.writeFileSync(kitabsJsonPath, JSON.stringify(kitabs, null, 2));
+      
+      // Also delete PDF file if exists
+      const pdfPath = path.join(uploadsDir, `${kitabId}.pdf`);
+      if (fs.existsSync(pdfPath)) {
+        fs.unlinkSync(pdfPath);
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Notes Registry API
+  app.get('/api/notes', (req, res) => {
+    try {
+      const data = fs.readFileSync(notesJsonPath, 'utf8');
+      res.json(JSON.parse(data || '[]'));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/notes', (req, res) => {
+    try {
+      const note = req.body;
+      if (!note || !note.id) {
+        return res.status(400).json({ error: 'Invalid note object' });
+      }
+      const raw = fs.readFileSync(notesJsonPath, 'utf8');
+      let notes: any[] = [];
+      try { notes = JSON.parse(raw || '[]'); } catch {}
+
+      const index = notes.findIndex((n: any) => n.id === note.id);
+      if (index >= 0) {
+        notes[index] = { ...notes[index], ...note };
+      } else {
+        notes.unshift(note);
+      }
+
+      fs.writeFileSync(notesJsonPath, JSON.stringify(notes, null, 2));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/notes/:id', (req, res) => {
+    try {
+      const noteId = req.params.id;
+      const raw = fs.readFileSync(notesJsonPath, 'utf8');
+      let notes: any[] = [];
+      try { notes = JSON.parse(raw || '[]'); } catch {}
+
+      notes = notes.filter((n: any) => n.id !== noteId);
+      fs.writeFileSync(notesJsonPath, JSON.stringify(notes, null, 2));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Middleware for handling raw PDF uploads (up to 200MB)
   app.post('/api/upload-pdf', express.raw({ type: '*/*', limit: '200mb' }), async (req, res) => {
     const kitabId = req.query.kitabId as string;
