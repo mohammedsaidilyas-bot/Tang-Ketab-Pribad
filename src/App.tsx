@@ -860,21 +860,23 @@ export function App() {
                   );
                 })}
 
-                <button
-                  type="button"
-                  onClick={() => setIsUploadModalOpen(true)}
-                  className="min-h-[260px] border border-dashed border-[#C7B299] bg-[#F7F4EE]/50 hover:bg-[#F3EFE6] hover:border-[#78350F] p-6 flex flex-col items-center justify-center text-center gap-3 transition-colors animate-fade-in"
-                >
-                  <Upload className="w-7 h-7 text-[#78350F]" />
-                  <div>
-                    <p className="text-lg font-display font-semibold text-[#1C1917]">
-                      + Tambahkan PDF Kitab Baru
-                    </p>
-                    <p className="text-xs text-[#57534E] max-w-xs mt-1">
-                      Pilih berkas PDF kitab dari perangkat Anda untuk diubah menjadi format buku saku PocketBook.
-                    </p>
-                  </div>
-                </button>
+                {activePembaca === 'admin' && (
+                  <button
+                    type="button"
+                    onClick={() => setIsUploadModalOpen(true)}
+                    className="min-h-[260px] border border-dashed border-[#C7B299] bg-[#F7F4EE]/50 hover:bg-[#F3EFE6] hover:border-[#78350F] p-6 flex flex-col items-center justify-center text-center gap-3 transition-colors animate-fade-in"
+                  >
+                    <Upload className="w-7 h-7 text-[#78350F]" />
+                    <div>
+                      <p className="text-lg font-display font-semibold text-[#1C1917]">
+                        + Tambahkan PDF Kitab Baru
+                      </p>
+                      <p className="text-xs text-[#57534E] max-w-xs mt-1">
+                        Pilih berkas PDF kitab dari perangkat Anda untuk diubah menjadi format buku saku PocketBook.
+                      </p>
+                    </div>
+                  </button>
+                )}
               </div>
             </section>
           </div>
