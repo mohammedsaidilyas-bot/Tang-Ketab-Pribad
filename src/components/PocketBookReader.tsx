@@ -321,7 +321,7 @@ const PdfCanvasPage: React.FC<{
 
       <canvas
         ref={canvasRef}
-        className={`max-w-full h-auto block shadow-2xs transition-opacity duration-150 ${
+        className={`w-full h-auto block shadow-xs transition-opacity duration-200 rounded-2xs ${
           status === 'ready' ? 'opacity-100' : 'hidden'
         }`}
       />
@@ -1008,7 +1008,9 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     return (
       <article
         onMouseUp={() => handleTextSelectionOnPage(pageData.pageNumber)}
-        className={`relative flex flex-col justify-between min-h-[360px] sm:min-h-[580px] lg:min-h-[660px] p-3 sm:p-8 lg:p-12 transition-colors duration-150 border ${themeStyle.pageBg} ${themeStyle.pageText} ${themeStyle.border} ${spineClass} ${curveClass}`}
+        className={`relative flex flex-col justify-between min-h-[460px] sm:min-h-[640px] lg:min-h-[780px] ${
+          kitab.isUploadedPdf ? 'p-2 sm:p-4 lg:p-6' : 'p-3 sm:p-8 lg:p-12'
+        } transition-colors duration-150 border ${themeStyle.pageBg} ${themeStyle.pageText} ${themeStyle.border} ${spineClass} ${curveClass}`}
       >
         {isBookmarked && (
           <div
@@ -1123,7 +1125,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   };
 
   return (
-    <section className="w-full max-w-[1440px] mx-auto px-4 sm:px-8 py-6">
+    <section className="w-full max-w-[1720px] mx-auto px-2 sm:px-4 lg:px-6 py-4">
       {/* Operational Reader Utility Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-6 border-b border-[#D6CEBE]">
         <div className="flex items-center gap-3 min-w-0">
@@ -1154,6 +1156,26 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
             <span aria-hidden="true">·</span>
             <span className="font-mono-tabular">{kitab.catalogNumber}</span>
           </div>
+
+          {kitab.isUploadedPdf && (
+            <label
+              className="px-2.5 py-1.5 text-xs font-medium border border-[#DEC89B] bg-[#FBF9F5] text-[#78350F] hover:bg-[#F4EFE6] transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-2xs"
+              title="Hubungkan file PDF kitab asli agar lembaran visual dapat dirender beresolusi tinggi"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Hubungkan File PDF</span>
+              <span className="sm:hidden">PDF</span>
+              <input
+                type="file"
+                accept="application/pdf,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleAttachPdfFile(file);
+                }}
+              />
+            </label>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -1844,10 +1866,10 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <div
           className={
-            settings.showMarginNotes ? 'lg:col-span-8 xl:col-span-9' : 'lg:col-span-12'
+            settings.showMarginNotes ? 'lg:col-span-9 xl:col-span-9 2xl:col-span-10' : 'lg:col-span-12'
           }
         >
           <div
@@ -2075,7 +2097,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
         </div>
 
         {settings.showMarginNotes && (
-          <aside className="lg:col-span-4 xl:col-span-3 space-y-6 bg-[#F7F4EE] border border-[#D6CEBE] p-5">
+          <aside className="lg:col-span-3 xl:col-span-3 2xl:col-span-2 space-y-6 bg-[#F7F4EE] border border-[#D6CEBE] p-4 sm:p-5">
             <div className="pb-3 border-b border-[#E5DEC9]">
               <p className="text-xs uppercase tracking-widest text-[#78350F] font-sans">
                 Catatan Pinggir · Hasyiyah
