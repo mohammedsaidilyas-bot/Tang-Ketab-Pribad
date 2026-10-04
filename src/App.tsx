@@ -459,8 +459,25 @@ export function App() {
           </button>
         </nav>
 
-        {/* Zone 3: Primary Action */}
+        {/* Zone 3: Primary Actions */}
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              const data = JSON.stringify({ kitabs, notes });
+              const blob = new Blob([data], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `tang-ketab-backup-${new Date().toISOString().split('T')[0]}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="px-4 py-2 text-xs font-medium text-[#78350F] bg-[#D6CEBE]/20 hover:bg-[#D6CEBE]/40 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Backup Data</span>
+          </button>
           <button
             type="button"
             onClick={() => setIsUploadModalOpen(true)}
