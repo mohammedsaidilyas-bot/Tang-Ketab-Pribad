@@ -60,7 +60,7 @@ interface PocketBookReaderProps {
   onToggleBookmark: (pageNumber: number) => void;
   onAddNote: (note: Omit<HasyiyahNote, 'id' | 'createdAt'>) => void;
   onDeleteNote: (noteId: string) => void;
-  onOpenUploadModal: () => void;
+  onOpenUploadModal?: () => void;
   onBackToLibrary: () => void;
 }
 
@@ -2043,16 +2043,18 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
               )}
             </div>
 
-            <div className="pt-4 border-t border-[#E5DEC9]">
-              <button
-                type="button"
-                onClick={onOpenUploadModal}
-                className="w-full py-2 px-3 text-xs font-medium border border-[#D6CEBE] bg-white hover:bg-[#EBE6DF] text-[#1C1917] transition-colors flex items-center justify-center gap-2"
-              >
-                <Upload className="w-3.5 h-3.5 text-[#78350F]" />
-                <span>Masukkan PDF Kitab Lainnya</span>
-              </button>
-            </div>
+            {onOpenUploadModal && (
+              <div className="pt-4 border-t border-[#E5DEC9]">
+                <button
+                  type="button"
+                  onClick={onOpenUploadModal}
+                  className="w-full py-2 px-3 text-xs font-medium border border-[#D6CEBE] bg-white hover:bg-[#EBE6DF] text-[#1C1917] transition-colors flex items-center justify-center gap-2"
+                >
+                  <Upload className="w-3.5 h-3.5 text-[#78350F]" />
+                  <span>Masukkan PDF Kitab Lainnya</span>
+                </button>
+              </div>
+            )}
           </aside>
         )}
       </div>

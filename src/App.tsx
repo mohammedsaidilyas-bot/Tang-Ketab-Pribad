@@ -473,45 +473,48 @@ export function App() {
         </nav>
 
         {/* Zone 3: Primary Actions */}
-        {activePembaca === 'admin' && (
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                localStorage.removeItem('tang_ketab_active_pembaca');
-                window.location.reload();
-              }}
-              className="px-3 py-1.5 text-[10px] font-medium text-[#78350F] bg-[#D6CEBE]/30 hover:bg-[#D6CEBE]/50 transition-colors rounded-xs whitespace-nowrap"
-            >
-              Reset
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const data = JSON.stringify({ kitabs, notes });
-                const blob = new Blob([data], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `tang-ketab-backup-${new Date().toISOString().split('T')[0]}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-              className="px-4 py-2 text-xs font-medium text-[#78350F] bg-[#D6CEBE]/20 hover:bg-[#D6CEBE]/40 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Backup Data</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsUploadModalOpen(true)}
-              className="px-4 py-2 text-xs font-medium text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors whitespace-nowrap shrink-0 flex items-center gap-2"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Masukkan PDF Kitab</span>
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              localStorage.removeItem('tang_ketab_active_pembaca');
+              window.location.reload();
+            }}
+            className="px-3 py-1.5 text-xs font-medium text-[#78350F] bg-[#D6CEBE]/40 hover:bg-[#D6CEBE]/60 transition-colors rounded-xs whitespace-nowrap"
+          >
+            Ganti Peran (Keluar)
+          </button>
+
+          {activePembaca === 'admin' && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const data = JSON.stringify({ kitabs, notes });
+                  const blob = new Blob([data], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `tang-ketab-backup-${new Date().toISOString().split('T')[0]}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-4 py-2 text-xs font-medium text-[#78350F] bg-[#D6CEBE]/20 hover:bg-[#D6CEBE]/40 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Backup Data</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsUploadModalOpen(true)}
+                className="px-4 py-2 text-xs font-medium text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors whitespace-nowrap shrink-0 flex items-center gap-2"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Masukkan PDF Kitab</span>
+              </button>
+            </>
+          )}
+        </div>
       </header>
 
       {/* Mobile Navigation Strip (for small screens) */}
@@ -657,14 +660,16 @@ export function App() {
                     Hanya kitab PDF yang Anda unggah yang akan disimpan dan ditampilkan di sini. Tidak ada kitab bawaan atau contoh yang tercampur.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsUploadModalOpen(true)}
-                  className="px-6 py-3.5 text-xs font-semibold text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors inline-flex items-center gap-2 shadow-xs"
-                >
-                  <Upload className="w-4 h-4" />
-                  <span>Unggah Berkas PDF Kitab Sekarang</span>
-                </button>
+                {activePembaca === 'admin' && (
+                  <button
+                    type="button"
+                    onClick={() => setIsUploadModalOpen(true)}
+                    className="px-6 py-3.5 text-xs font-semibold text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors inline-flex items-center gap-2 shadow-xs"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Unggah Berkas PDF Kitab Sekarang</span>
+                  </button>
+                )}
               </section>
             )}
 
@@ -888,7 +893,7 @@ export function App() {
               onToggleBookmark={handleToggleBookmark}
               onAddNote={handleAddNote}
               onDeleteNote={handleDeleteNote}
-              onOpenUploadModal={() => setIsUploadModalOpen(true)}
+              onOpenUploadModal={activePembaca === 'admin' ? () => setIsUploadModalOpen(true) : undefined}
               onBackToLibrary={() => setActiveTab('pustaka')}
             />
           ) : (
@@ -1271,14 +1276,16 @@ export function App() {
             <p className="text-sm text-[#57534E]">
               Setelah Anda mengunggah naskah PDF kitab, struktur bab, fihris halaman, dan identitas filologi akan ditampilkan di sini.
             </p>
-            <button
-              type="button"
-              onClick={() => setIsUploadModalOpen(true)}
-              className="px-5 py-2.5 text-xs font-semibold text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors inline-flex items-center gap-2 shadow-xs"
-            >
-              <Upload className="w-4 h-4" />
-              <span>Unggah Berkas PDF Sekarang</span>
-            </button>
+            {activePembaca === 'admin' && (
+              <button
+                type="button"
+                onClick={() => setIsUploadModalOpen(true)}
+                className="px-5 py-2.5 text-xs font-semibold text-white bg-[#78350F] hover:bg-[#5C280B] transition-colors inline-flex items-center gap-2 shadow-xs"
+              >
+                <Upload className="w-4 h-4" />
+                <span>Unggah Berkas PDF Sekarang</span>
+              </button>
+            )}
           </div>
         ))}
       </main>
@@ -1292,14 +1299,18 @@ export function App() {
             · Pustaka Kitab Pribadi & Pembaca PDF Model PocketBook
           </div>
           <div className="flex items-center gap-4">
-            <button
-              type="button"
-              onClick={() => setIsUploadModalOpen(true)}
-              className="hover:text-[#1C1917] underline"
-            >
-              Unggah PDF Kitab
-            </button>
-            <span aria-hidden="true">·</span>
+            {activePembaca === 'admin' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsUploadModalOpen(true)}
+                  className="hover:text-[#1C1917] underline"
+                >
+                  Unggah PDF Kitab
+                </button>
+                <span aria-hidden="true">·</span>
+              </>
+            )}
             <button
               type="button"
               onClick={() => setActiveTab('reader')}

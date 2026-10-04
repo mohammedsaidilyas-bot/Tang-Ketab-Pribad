@@ -7,6 +7,15 @@ interface ReaderSelectorProps {
 }
 
 export function ReaderSelector({ onSelect }: ReaderSelectorProps) {
+  const handleAdminClick = () => {
+    const pwd = prompt('Masukkan Sandi Admin:');
+    if (pwd === '1234') {
+      onSelect('admin');
+    } else if (pwd !== null) {
+      alert('Sandi salah!');
+    }
+  };
+
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center p-6 text-[#FBF9F5] font-serif">
       {/* Background Image */}
@@ -24,21 +33,23 @@ export function ReaderSelector({ onSelect }: ReaderSelectorProps) {
         <div className="grid gap-6">
           <button
             onClick={() => onSelect('pembaca')}
-            className="flex items-center justify-center gap-3 p-5 bg-[#78350F]/80 hover:bg-[#78350F] text-white rounded-lg transition-all text-xl font-medium backdrop-blur-sm border border-white/20"
+            className="flex items-center justify-center gap-3 p-5 bg-[#78350F]/80 hover:bg-[#78350F] text-white rounded-lg transition-all text-xl font-medium backdrop-blur-sm border border-white/20 shadow-xl"
           >
             <User size={24} />
-            Pembaca
-          </button>
-          
-          <button
-            onClick={() => onSelect('admin')}
-            className="flex items-center justify-center gap-3 p-5 bg-[#1C1917]/80 hover:bg-[#1C1917] text-white rounded-lg transition-all text-xl font-medium backdrop-blur-sm border border-white/20"
-          >
-            <Shield size={24} />
-            Admin
+            Masuk sebagai Pembaca
           </button>
         </div>
       </div>
+
+      {/* Discreet Admin Link at Bottom Corner */}
+      <button
+        onClick={handleAdminClick}
+        className="absolute bottom-4 right-4 z-20 flex items-center gap-1.5 text-xs text-white/30 hover:text-white/80 transition-colors p-2"
+        title="Admin Login"
+      >
+        <Shield size={14} />
+        <span>Admin</span>
+      </button>
     </div>
   );
 }
