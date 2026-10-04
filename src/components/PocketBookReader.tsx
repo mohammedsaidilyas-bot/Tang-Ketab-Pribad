@@ -456,9 +456,9 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       const loadPdf = async () => {
         const timeout = setTimeout(() => {
           if (!isCancelled && !pdfDoc) {
-            setInitError('Berkas PDF kitab tidak dapat dimuat dari cloud storage. Mohon periksa kembali koneksi internet Anda atau coba unggah ulang kitab ini.');
+            setInitError('Berkas PDF kitab tidak dapat dimuat dari cloud storage dalam waktu yang wajar. Mohon periksa kembali koneksi internet Anda atau coba unggah ulang kitab ini.');
           }
-        }, 15000); // 15 seconds timeout
+        }, 25000); // 25 seconds timeout
 
         try {
           let doc = null;
@@ -472,12 +472,12 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
           if (!isCancelled && doc) {
             setPdfDoc(doc);
           } else if (!isCancelled && !doc) {
-            setInitError('Gagal mengambil dokumen PDF dari server. Berkas mungkin sudah dihapus atau tidak dapat diakses.');
+            setInitError(`Gagal mengambil dokumen PDF dari server. Berkas mungkin sudah dihapus, akses ditolak (CORS), atau koneksi terputus. (URL: ${kitab.pdfUrl?.substring(0, 40)}...)`);
           }
-        } catch (err) {
+        } catch (err: any) {
           clearTimeout(timeout);
           if (!isCancelled) {
-            setInitError('Terjadi kesalahan teknis saat membuka PDF. Mohon coba muat ulang halaman ini.');
+            setInitError(`Terjadi kesalahan teknis saat membuka PDF: ${err.message || 'Kesalahan jaringan'}. Mohon coba muat ulang halaman ini.`);
           }
         }
       };

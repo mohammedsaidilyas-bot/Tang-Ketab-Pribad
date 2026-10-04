@@ -75,10 +75,13 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
   let buffer: ArrayBuffer | undefined = typeof urlOrRawBuffer === 'object' ? urlOrRawBuffer : undefined;
 
   if (!buffer && blobKey) {
+    console.log(`Attempting to load PDF from local IndexedDB: ${blobKey}`);
     buffer = (await loadPdfArrayBuffer(blobKey)) || undefined;
+    if (buffer) console.log(`PDF loaded from local IndexedDB.`);
   }
 
   if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
+    console.log(`Attempting to fetch PDF from URL: ${urlOrRawBuffer}`);
     try {
       const resp = await fetch(urlOrRawBuffer, {
         mode: 'cors',
@@ -86,26 +89,28 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
       });
       if (resp.ok) {
         buffer = await resp.arrayBuffer();
+        console.log(`PDF fetched from URL successfully. Size: ${buffer.byteLength} bytes`);
         if (blobKey) {
           await savePdfArrayBuffer(blobKey, buffer);
         }
       } else {
-        console.warn(`Fetch PDF failed with status: ${resp.status} ${resp.statusText}. Will try direct PDF.js URL loading.`);
+        console.warn(`Fetch PDF failed with status: ${resp.status} ${resp.statusText}.`);
       }
     } catch (err) {
-      console.error('Error fetching PDF from URL (CORS or network):', urlOrRawBuffer, err);
-      // Fallback: try direct loading in PDF.js which might handle some cases better
+      console.error('Error fetching PDF from URL (CORS or network):', err);
     }
   }
 
-  // If we have a URL but no buffer, try direct loading
+  // If we have a URL but no buffer, try direct loading in PDF.js (handles some streams/ranges better)
   if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
+    console.log(`Attempting direct PDF.js loading from URL: ${urlOrRawBuffer}`);
     try {
       const task = pdfjsLib.getDocument({
         url: urlOrRawBuffer,
         cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/cmaps/`,
         cMapPacked: true,
         standardFontDataUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/standard_fonts/`,
+        disableRange: false, // Ensure range requests are enabled for potentially better performance
       });
       const doc = await task.promise;
       if (cacheKey) {
@@ -117,7 +122,10 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
     }
   }
 
-  if (!buffer) return null;
+  if (!buffer) {
+    console.error('No PDF buffer available after all loading attempts.');
+    return null;
+  }
 
   try {
     const task = createPdfLoadingTask(new Uint8Array(buffer));

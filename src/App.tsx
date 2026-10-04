@@ -406,9 +406,12 @@ export function App() {
   };
 
   const handleUpdateChapters = (kitabId: string, chapters: KitabDocument['chapters']) => {
-    setKitabs((prev) =>
-      prev.map((k) => (k.id === kitabId ? { ...k, chapters } : k))
-    );
+    setKitabs((prev) => {
+      const updated = prev.map((k) => (k.id === kitabId ? { ...k, chapters } : k));
+      const target = updated.find(k => k.id === kitabId);
+      if (target) saveKitabToFirestore(target);
+      return updated;
+    });
   };
 
   const handleToggleBookmark = (pageNumber: number) => {

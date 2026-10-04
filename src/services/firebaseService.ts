@@ -16,9 +16,23 @@ export async function uploadPdfToStorage(kitabId: string, file: File): Promise<s
     console.warn('Firebase Storage is not initialized.');
     return '';
   }
-  const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
-  const snapshot = await uploadBytes(storageRef, file);
-  return getDownloadURL(snapshot.ref);
+  try {
+    console.log(`Starting PDF upload for kitab: ${kitabId}, size: ${file.size} bytes`);
+    const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
+    const snapshot = await uploadBytes(storageRef, file, {
+      contentType: 'application/pdf',
+      customMetadata: {
+        originalName: file.name,
+        uploadedAt: new Date().toISOString()
+      }
+    });
+    const url = await getDownloadURL(snapshot.ref);
+    console.log(`PDF upload successful. URL: ${url}`);
+    return url;
+  } catch (e: any) {
+    console.error('Error in uploadPdfToStorage:', e);
+    throw new Error(`Gagal mengunggah PDF: ${e.message || 'Kesalahan jaringan'}`);
+  }
 }
 
 export async function getStoragePdfUrl(kitabId: string): Promise<string | null> {
