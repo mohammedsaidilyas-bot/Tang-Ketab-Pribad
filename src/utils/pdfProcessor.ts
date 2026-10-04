@@ -81,29 +81,30 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
     if (buffer) console.log(`[Loader] Success: Found in local storage.`);
   }
 
-  // 2. Try Fetch URL (CORS)
+  // 2. Try Fetch URL via Server Proxy (Bypasses CORS entirely)
   if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
-    console.log(`[Loader] Fetching from URL: ${urlOrRawBuffer}`);
+    const targetUrl = urlOrRawBuffer.startsWith('http') 
+      ? `/api/proxy-pdf?url=${encodeURIComponent(urlOrRawBuffer)}` 
+      : urlOrRawBuffer;
+
+    console.log(`[Loader] Fetching via proxy: ${targetUrl}`);
     try {
-      const resp = await fetch(urlOrRawBuffer, {
-        mode: 'cors',
-        credentials: 'omit',
-      });
+      const resp = await fetch(targetUrl);
       if (resp.ok) {
         buffer = await resp.arrayBuffer();
-        console.log(`[Loader] Success: Fetched ${buffer.byteLength} bytes.`);
+        console.log(`[Loader] Success: Fetched ${buffer.byteLength} bytes via proxy.`);
         if (blobKey) {
           await savePdfArrayBuffer(blobKey, buffer);
         }
       } else {
-        console.warn(`[Loader] Fetch failed: ${resp.status} ${resp.statusText}`);
+        console.warn(`[Loader] Proxy fetch failed: ${resp.status} ${resp.statusText}`);
       }
     } catch (err) {
-      console.warn('[Loader] Fetch CORS/Network error, falling back to direct load.', err);
+      console.warn('[Loader] Proxy fetch error, falling back to direct load.', err);
     }
   }
 
-  // 3. Try Direct PDF.js Load (Resilient for some URL types)
+  // 3. Try Direct PDF.js Load as fallback
   if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
     console.log(`[Loader] Attempting direct PDF.js URL load: ${urlOrRawBuffer}`);
     try {
