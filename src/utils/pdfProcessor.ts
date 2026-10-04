@@ -2071,27 +2071,35 @@ export async function renderPdfPageToCanvas(
   canvas: HTMLCanvasElement,
   scale = 1.35
 ): Promise<boolean> {
-  const buffer = await loadPdfArrayBuffer(pdfBlobKey);
-  if (!buffer) return false;
+  try {
+    let pdfDoc = globalPdfDocCache.get(pdfBlobKey);
+    if (!pdfDoc) {
+      const buffer = await loadPdfArrayBuffer(pdfBlobKey);
+      if (!buffer) return false;
+      const loadingTask = createPdfLoadingTask(new Uint8Array(buffer.slice(0)));
+      pdfDoc = await loadingTask.promise;
+      globalPdfDocCache.set(pdfBlobKey, pdfDoc);
+    }
+    if (!pdfDoc || pageNumber < 1 || pageNumber > pdfDoc.numPages) return false;
 
-  const loadingTask = createPdfLoadingTask(new Uint8Array(buffer.slice(0)));
-  const pdfDoc = await loadingTask.promise;
-  if (pageNumber < 1 || pageNumber > pdfDoc.numPages) return false;
+    const page = await pdfDoc.getPage(pageNumber);
+    const viewport = page.getViewport({ scale });
+    const context = canvas.getContext('2d');
+    if (!context) return false;
 
-  const page = await pdfDoc.getPage(pageNumber);
-  const viewport = page.getViewport({ scale });
-  const context = canvas.getContext('2d');
-  if (!context) return false;
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
 
-  canvas.height = viewport.height;
-  canvas.width = viewport.width;
+    await page.render({
+      canvasContext: context,
+      viewport,
+    }).promise;
 
-  await page.render({
-    canvasContext: context,
-    viewport,
-  }).promise;
-
-  return true;
+    return true;
+  } catch (err) {
+    console.warn('Error rendering PDF page to canvas:', err);
+    return false;
+  }
 }
 
 /**

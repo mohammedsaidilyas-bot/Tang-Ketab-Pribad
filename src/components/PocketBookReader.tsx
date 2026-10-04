@@ -476,12 +476,13 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
         try {
           let doc = null;
-          if (kitab.pdfUrl) {
-            setLoadingStatus('Mengunduh naskah dari server cloud...');
-            doc = await getOrLoadPdfDoc(kitab.pdfBlobKey, kitab.pdfUrl);
-          } else if (kitab.pdfBlobKey) {
-            setLoadingStatus('Membuka naskah dari penyimpanan lokal...');
-            doc = await getOrLoadPdfDoc(kitab.pdfBlobKey);
+          const effectiveUrl = kitab.pdfUrl || `/api/pdf/${kitab.id}`;
+          setLoadingStatus('Mengunduh naskah dari penyimpanan awan...');
+          doc = await getOrLoadPdfDoc(kitab.pdfBlobKey || kitab.id, effectiveUrl);
+          
+          if (!doc && kitab.id) {
+            console.log(`[Reader] Retrying PDF load via server endpoint /api/pdf/${kitab.id}`);
+            doc = await getOrLoadPdfDoc(kitab.id, `/api/pdf/${kitab.id}`);
           }
           
           clearTimeout(timeout);
@@ -490,7 +491,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
             setPdfDoc(doc);
             setInitError(null);
           } else if (!isCancelled && !doc) {
-            setInitError('Sistem tidak menemukan berkas PDF asli di server cloud. Hal ini bisa terjadi jika koneksi terputus saat proses unggah sebelumnya.');
+            setInitError('Sistem tidak menemukan berkas PDF asli di server cloud. Hal ini bisa terjadi jika berkas PDF belum sempat terunggah ke penyimpanan cloud.');
           }
           setLoadingStatus(null);
         } catch (err: any) {
