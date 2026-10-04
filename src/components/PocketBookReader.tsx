@@ -352,25 +352,8 @@ const PdfCanvasPage: React.FC<{
                   {pageData?.chapterTitle || `Lembar Naskah ${pageNumber}`}
                 </h4>
                 <p className="text-xs text-[#57534E] max-w-sm mx-auto leading-relaxed">
-                  Pindaian visual PDF asli untuk lembar {pageNumber} belum tersimpan di memori perangkat ini. Hubungkan file PDF kitab Anda sekali saja untuk menampilkan lembaran visual PDF asli.
+                  Pindaian visual PDF asli untuk lembar {pageNumber} sedang dimuat ke memori perangkat ini.
                 </p>
-                {onAttachPdfFile && (
-                  <div className="pt-2">
-                    <label className="inline-flex items-center gap-2 px-4 py-2 bg-[#78350F] text-white text-xs font-medium cursor-pointer hover:bg-[#5C280B] transition-colors shadow-xs rounded-xs">
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>Hubungkan File PDF Kitab Ini</span>
-                      <input
-                        type="file"
-                        accept="application/pdf,.pdf"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) onAttachPdfFile(file);
-                        }}
-                      />
-                    </label>
-                  </div>
-                )}
               </div>
             )}
           </div>
