@@ -278,9 +278,19 @@ export function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY_KITABS, JSON.stringify(kitabs));
-    } catch {
-      // ignore
+      if (kitabs.length > 0) {
+        // Prune large page data for local storage to stay under 5MB quota
+        const prunedKitabs = kitabs.map(k => ({
+          ...k,
+          pages: (k.pages || []).map(p => ({
+            ...p,
+            paragraphs: (p.pageNumber || 0) <= 12 ? (p.paragraphs || []) : ['[Teks disederhanakan untuk penyimpanan lokal · Silakan baca visual PDF asli]']
+          }))
+        }));
+        localStorage.setItem(STORAGE_KEY_KITABS, JSON.stringify(prunedKitabs));
+      }
+    } catch (e) {
+      console.warn('LocalStorage quota warning:', e);
     }
   }, [kitabs]);
 

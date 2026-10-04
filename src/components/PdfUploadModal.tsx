@@ -22,7 +22,7 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
   const [password, setPassword] = useState('');
   const [requiresPassword, setRequiresPassword] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
-  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ current: number; total: number; status?: 'converting' | 'uploading' } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -60,7 +60,7 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
 
     setIsConverting(true);
     setErrorMsg(null);
-    setProgress({ current: 0, total: 1 });
+    setProgress({ current: 0, total: 1, status: 'converting' });
 
     try {
       const newKitab = await convertPdfFileToKitab(targetFile, {
@@ -69,7 +69,13 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
         customCategory: customCategory || 'Kitab Pribadi',
         coverTone,
         password: password.trim() || undefined,
-        onProgress: (current, total) => setProgress({ current, total }),
+        onProgress: (current, total) => {
+          if (current === total) {
+            setProgress({ current, total, status: 'uploading' });
+          } else {
+            setProgress({ current, total, status: 'converting' });
+          }
+        },
       });
       setIsConverting(false);
       onKitabCreated(newKitab);
@@ -285,18 +291,24 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
             <div className="p-4 bg-[#F3EFE6] border border-[#D6CEBE]">
               <div className="flex items-center justify-between text-xs text-[#1C1917] mb-2">
                 <span className="flex items-center gap-2 font-medium">
-                  <FileText className="w-4 h-4 text-[#78350F] animate-pulse" />
-                  Menyusun lembaran PocketBook dari PDF...
+                  {progress.status === 'uploading' ? (
+                    <Sparkles className="w-4 h-4 text-[#78350F] animate-pulse" />
+                  ) : (
+                    <FileText className="w-4 h-4 text-[#78350F] animate-pulse" />
+                  )}
+                  {progress.status === 'uploading' 
+                    ? 'Hampir selesai, sedang mengamankan berkas ke cloud...' 
+                    : 'Menyusun lembaran PocketBook dari PDF...'}
                 </span>
                 <span className="font-mono-tabular">
-                  Halaman {progress.current} / {progress.total}
+                  {progress.status === 'uploading' ? 'Langkah Terakhir' : `Halaman ${progress.current} / ${progress.total}`}
                 </span>
               </div>
               <div className="w-full h-1.5 bg-[#E5DEC9] overflow-hidden">
                 <div
-                  className="h-full bg-[#78350F] transition-transform duration-150 origin-left"
+                  className={`h-full transition-all duration-300 origin-left ${progress.status === 'uploading' ? 'bg-[#14532D] animate-pulse' : 'bg-[#78350F]'}`}
                   style={{
-                    transform: `scaleX(${Math.max(0.08, progress.current / Math.max(1, progress.total))})`,
+                    transform: progress.status === 'uploading' ? 'scaleX(1)' : `scaleX(${Math.max(0.08, progress.current / Math.max(1, progress.total))})`,
                   }}
                 />
               </div>

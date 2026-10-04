@@ -159,7 +159,7 @@ async function prefetchAdjacentPages(pdfDoc: any, currentPage: number, kitabId: 
 }
 
 const PdfCanvasPage: React.FC<{
-  kitabId: string;
+  kitab: KitabDocument;
   pdfDoc: any;
   pageNumber: number;
   pageData?: KitabPage;
@@ -168,7 +168,7 @@ const PdfCanvasPage: React.FC<{
   lineLeadingClass: string;
   onAttachPdfFile?: (file: File) => void;
 }> = ({
-  kitabId,
+  kitab,
   pdfDoc,
   pageNumber,
   pageData,
@@ -179,6 +179,7 @@ const PdfCanvasPage: React.FC<{
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<any>(null);
+  const kitabId = kitab.id;
   const [status, setStatus] = useState<'loading' | 'ready' | 'fallback'>('loading');
   const [isRendering, setIsRendering] = useState(false);
 
@@ -338,7 +339,7 @@ const PdfCanvasPage: React.FC<{
           <div style={{ fontSize: `${fontSize}px` }} className={`space-y-3.5 ${lineLeadingClass}`}>
             {pageData?.paragraphs &&
             pageData.paragraphs.length > 0 &&
-            !pageData.paragraphs[0].startsWith('[Halaman') ? (
+            !pageData.paragraphs[0].startsWith('[') ? (
               pageData.paragraphs.map((p, idx) => (
                 <p key={idx} className="text-justify text-xs sm:text-sm">
                   {p}
@@ -423,6 +424,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   const [newChapterPage, setNewChapterPage] = useState<number>(1);
   const [isScanningPdfToc, setIsScanningPdfToc] = useState(false);
   const [tocUpdateSuccessToast, setTocUpdateSuccessToast] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
 
   const [showSearchPopover, setShowSearchPopover] = useState(false);
   const [inBookQuery, setInBookQuery] = useState('');
@@ -452,15 +454,31 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       
       // Load from URL if available, then fallback to local
       const loadPdf = async () => {
-        let doc = null;
-        if (kitab.pdfUrl) {
-          doc = await getOrLoadPdfDoc(kitab.pdfBlobKey, kitab.pdfUrl);
-        } else if (kitab.pdfBlobKey) {
-          doc = await getOrLoadPdfDoc(kitab.pdfBlobKey);
-        }
-        
-        if (!isCancelled && doc) {
-          setPdfDoc(doc);
+        const timeout = setTimeout(() => {
+          if (!isCancelled && !pdfDoc) {
+            setInitError('Berkas PDF kitab tidak dapat dimuat dari cloud storage. Mohon periksa kembali koneksi internet Anda atau coba unggah ulang kitab ini.');
+          }
+        }, 15000); // 15 seconds timeout
+
+        try {
+          let doc = null;
+          if (kitab.pdfUrl) {
+            doc = await getOrLoadPdfDoc(kitab.pdfBlobKey, kitab.pdfUrl);
+          } else if (kitab.pdfBlobKey) {
+            doc = await getOrLoadPdfDoc(kitab.pdfBlobKey);
+          }
+          
+          clearTimeout(timeout);
+          if (!isCancelled && doc) {
+            setPdfDoc(doc);
+          } else if (!isCancelled && !doc) {
+            setInitError('Gagal mengambil dokumen PDF dari server. Berkas mungkin sudah dihapus atau tidak dapat diakses.');
+          }
+        } catch (err) {
+          clearTimeout(timeout);
+          if (!isCancelled) {
+            setInitError('Terjadi kesalahan teknis saat membuka PDF. Mohon coba muat ulang halaman ini.');
+          }
         }
       };
       
@@ -888,6 +906,37 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     setTimeout(() => setJustSavedNote(false), 1800);
   };
 
+  if (initError) {
+    return (
+      <section className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-6 bg-[#FBF9F5] min-h-[70vh]">
+        <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center border border-red-200">
+          <X className="w-10 h-10 text-red-600" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-display font-bold text-[#1C1917]">Maaf, Gagal Memuat Kitab</h2>
+          <p className="text-sm text-[#57534E] max-w-sm mx-auto leading-relaxed">
+            {initError}
+          </p>
+        </div>
+        <div className="flex gap-4">
+          <button
+            onClick={() => window.location.reload()}
+            className="px-6 py-2.5 bg-[#1C1917] text-white text-xs font-semibold rounded-xs shadow-md hover:bg-[#44403C] flex items-center gap-2"
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+            Muat Ulang Aplikasi
+          </button>
+          <button
+            onClick={onBackToLibrary}
+            className="px-6 py-2.5 border border-[#D6CEBE] text-[#1C1917] text-xs font-semibold rounded-xs hover:bg-[#F3EFE6]"
+          >
+            Kembali ke Pustaka
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   const themeStyle = THEME_STYLES[settings.theme];
 
   // Determine what pages are rendered on the underlying static sheets during transition/drag
@@ -969,7 +1018,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
           {kitab.isUploadedPdf ? (
             <PdfCanvasPage
-              kitabId={kitab.id}
+              kitab={kitab}
               pdfDoc={pdfDoc}
               pageNumber={pageData.pageNumber}
               pageData={pageData}
@@ -1098,7 +1147,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
 
           {kitab.isUploadedPdf ? (
             <PdfCanvasPage
-              kitabId={kitab.id}
+              kitab={kitab}
               pdfDoc={pdfDoc}
               pageNumber={pageData.pageNumber}
               pageData={pageData}

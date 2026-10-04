@@ -1984,7 +1984,7 @@ export async function convertPdfFileToKitab(
   const maxPagesToExtractText = Math.min(numPages, 40);
 
   for (let i = 1; i <= numPages; i++) {
-    if (options.onProgress && i % 4 === 0) {
+    if (options.onProgress) {
       options.onProgress(i, numPages);
     }
 
@@ -2072,6 +2072,10 @@ export async function convertPdfFileToKitab(
     fileSizeKB > 1024
       ? `PDF Terunggah (${(fileSizeKB / 1024).toFixed(1)} MB)`
       : `PDF Terunggah (${fileSizeKB} KB)`;
+
+  if (options.onProgress) {
+    options.onProgress(numPages, numPages);
+  }
 
   const pdfUrl = await uploadPdfToStorage(kitabId, file);
   if (!pdfUrl) {
