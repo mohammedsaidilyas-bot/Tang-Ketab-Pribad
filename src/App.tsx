@@ -21,6 +21,7 @@ import {
 import { DEFAULT_KITABS, DEFAULT_NOTES } from './data/defaultKitabs';
 import { PocketBookReader } from './components/PocketBookReader';
 import { PdfUploadModal } from './components/PdfUploadModal';
+import { ReaderSelector } from './components/ReaderSelector';
 import {
   detectOrGenerateKitabChapters,
   detectPdfCoverOffset,
@@ -128,7 +129,15 @@ export function App() {
   const [activeKitabId, setActiveKitabId] = useState<string>(kitabs[0]?.id || '');
   const [catalogKitabId, setCatalogKitabId] = useState<string>(kitabs[0]?.id || '');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [activePembaca, setActivePembaca] = useState<string | null>(() => {
+    return localStorage.getItem('tang_ketab_active_pembaca');
+  });
 
+  const handleSelectPembaca = (role: 'pembaca' | 'admin') => {
+    localStorage.setItem('tang_ketab_active_pembaca', role);
+    setActivePembaca(role);
+  };
+ 
   // Library Filter & Search states
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'pdf' | 'bookmarked'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -391,6 +400,10 @@ export function App() {
 
   const totalPagesAcrossLibrary = kitabs.reduce((acc, k) => acc + k.totalPages, 0);
   const totalBookmarks = kitabs.reduce((acc, k) => acc + k.bookmarks.length, 0);
+
+  if (!activePembaca) {
+    return <ReaderSelector onSelect={handleSelectPembaca} />;
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FBF9F5] text-[#1C1917]">
