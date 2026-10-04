@@ -477,6 +477,16 @@ export function App() {
           <button
             type="button"
             onClick={() => {
+              localStorage.removeItem('tang_ketab_active_pembaca');
+              window.location.reload();
+            }}
+            className="px-3 py-1.5 text-[10px] font-medium text-[#78350F] bg-[#D6CEBE]/30 hover:bg-[#D6CEBE]/50 transition-colors rounded-xs whitespace-nowrap"
+          >
+            Reset
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               const data = JSON.stringify({ kitabs, notes });
               const blob = new Blob([data], { type: 'application/json' });
               const url = URL.createObjectURL(blob);
