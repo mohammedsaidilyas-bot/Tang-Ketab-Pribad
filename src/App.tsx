@@ -160,23 +160,23 @@ export function App() {
           let currentK = { ...k };
           let updated = false;
 
-          // 1. Try to recover missing cloud URL
+          // 1. Try to recover missing cloud URL if it's not present
           if (!currentK.pdfUrl) {
             try {
               const recoveredUrl = await getStoragePdfUrl(currentK.id);
               if (recoveredUrl) {
                 currentK.pdfUrl = recoveredUrl;
                 updated = true;
-                console.log(`Recovered cloud URL for kitab: ${currentK.title}`);
+                console.log(`[Heal] Recovered cloud URL for kitab: ${currentK.title}`);
+              } else {
+                console.warn(`[Heal] Could not find cloud file for kitab: ${currentK.title}`);
               }
             } catch (e) {
-              console.warn(`Failed to recover cloud URL for kitab ${currentK.id}:`, e);
+              console.warn(`[Heal] Error recovering cloud URL for kitab ${currentK.id}:`, e);
             }
           }
 
-          // 2. Only persist to Firestore if we actually changed something (like recovering a URL)
-          // or if the kitab is entirely local (no pdfUrl at all but should have one).
-          // We avoid unconditional writes to prevent hitting Firestore quotas.
+          // 2. Only persist to Firestore if we actually recovered something
           if (updated) {
             await saveKitabToFirestore(currentK);
             if (!isCancelled) {
@@ -196,19 +196,27 @@ export function App() {
       if (cloudKitabs && cloudKitabs.length > 0) {
         setKitabs((prev) => {
           const map = new Map<string, KitabDocument>();
-          // Merge logic: Cloud version is authoritative for shared fields
-          // but we keep local blob keys if they exist
+          
+          // 1. Build map from cloud (authority)
           cloudKitabs.forEach((k) => map.set(k.id, k));
+          
+          // 2. Merge with local state to preserve local-only fields
           prev.forEach((k) => {
             if (!map.has(k.id)) {
+              // Only keep local kitabs if they are NOT in the cloud kitabs list
+              // (unless they were deleted, but for now we keep them if they are local-only)
               map.set(k.id, k);
             } else {
               const cloudK = map.get(k.id)!;
               map.set(k.id, {
                 ...cloudK,
-                bookmarks: cloudK.bookmarks || k.bookmarks || [],
-                pages: cloudK.pages || k.pages || [],
-                chapters: cloudK.chapters || k.chapters || [],
+                // Ensure cloud version has priority for critical shared fields
+                pdfUrl: cloudK.pdfUrl || k.pdfUrl,
+                isUploadedPdf: cloudK.isUploadedPdf || k.isUploadedPdf,
+                // Fallback to local for non-synced or pruned fields
+                bookmarks: cloudK.bookmarks?.length ? cloudK.bookmarks : (k.bookmarks || []),
+                pages: cloudK.pages?.length ? cloudK.pages : (k.pages || []),
+                chapters: cloudK.chapters?.length ? cloudK.chapters : (k.chapters || []),
                 pdfBlobKey: k.pdfBlobKey || cloudK.pdfBlobKey,
               });
             }
@@ -399,6 +407,23 @@ export function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleManualSync = async () => {
+    console.log('[Sync] Manual sync triggered by Admin...');
+    for (const k of kitabs) {
+      if (k.isUploadedPdf) {
+        try {
+          const recoveredUrl = await getStoragePdfUrl(k.id);
+          if (recoveredUrl && recoveredUrl !== k.pdfUrl) {
+            handleUpdateKitab(k.id, { pdfUrl: recoveredUrl });
+          }
+        } catch (e) {
+          console.warn(`[Sync] Failed to check cloud for ${k.id}:`, e);
+        }
+      }
+    }
+    alert('Sinkronisasi awan selesai diproses.');
+  };
+
   const handlePageChange = (newPage: number) => {
     if (!activeKitab) return;
     setKitabs((prev) =>
@@ -560,6 +585,17 @@ export function App() {
 
         {/* Zone 2: 4 Clean Navigation Links */}
         <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-[#57534E]">
+          {activePembaca === 'admin' && (
+            <button
+              type="button"
+              onClick={handleManualSync}
+              className="py-1 px-3 bg-[#F3EFE6] text-[#78350F] border border-[#78350F]/20 rounded-full text-[10px] uppercase tracking-widest font-bold hover:bg-[#78350F] hover:text-white transition-all flex items-center gap-1.5 shadow-2xs"
+              title="Perbaiki & Sinkronisasi ulang semua link PDF ke cloud"
+            >
+              <RotateCw className="w-3 h-3" />
+              <span>Rekonsiliasi Awan</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setActiveTab('pustaka')}

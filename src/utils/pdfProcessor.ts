@@ -74,14 +74,16 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
 
   let buffer: ArrayBuffer | undefined = typeof urlOrRawBuffer === 'object' ? urlOrRawBuffer : undefined;
 
+  // 1. Try Local Storage (IndexedDB)
   if (!buffer && blobKey) {
-    console.log(`Attempting to load PDF from local IndexedDB: ${blobKey}`);
+    console.log(`[Loader] Checking local IndexedDB for: ${blobKey}`);
     buffer = (await loadPdfArrayBuffer(blobKey)) || undefined;
-    if (buffer) console.log(`PDF loaded from local IndexedDB.`);
+    if (buffer) console.log(`[Loader] Success: Found in local storage.`);
   }
 
+  // 2. Try Fetch URL (CORS)
   if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
-    console.log(`Attempting to fetch PDF from URL: ${urlOrRawBuffer}`);
+    console.log(`[Loader] Fetching from URL: ${urlOrRawBuffer}`);
     try {
       const resp = await fetch(urlOrRawBuffer, {
         mode: 'cors',
@@ -89,41 +91,42 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
       });
       if (resp.ok) {
         buffer = await resp.arrayBuffer();
-        console.log(`PDF fetched from URL successfully. Size: ${buffer.byteLength} bytes`);
+        console.log(`[Loader] Success: Fetched ${buffer.byteLength} bytes.`);
         if (blobKey) {
           await savePdfArrayBuffer(blobKey, buffer);
         }
       } else {
-        console.warn(`Fetch PDF failed with status: ${resp.status} ${resp.statusText}.`);
+        console.warn(`[Loader] Fetch failed: ${resp.status} ${resp.statusText}`);
       }
     } catch (err) {
-      console.error('Error fetching PDF from URL (CORS or network):', err);
+      console.warn('[Loader] Fetch CORS/Network error, falling back to direct load.', err);
     }
   }
 
-  // If we have a URL but no buffer, try direct loading in PDF.js (handles some streams/ranges better)
+  // 3. Try Direct PDF.js Load (Resilient for some URL types)
   if (!buffer && typeof urlOrRawBuffer === 'string' && urlOrRawBuffer) {
-    console.log(`Attempting direct PDF.js loading from URL: ${urlOrRawBuffer}`);
+    console.log(`[Loader] Attempting direct PDF.js URL load: ${urlOrRawBuffer}`);
     try {
       const task = pdfjsLib.getDocument({
         url: urlOrRawBuffer,
         cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/cmaps/`,
         cMapPacked: true,
         standardFontDataUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/standard_fonts/`,
-        disableRange: false, // Ensure range requests are enabled for potentially better performance
+        disableRange: false,
       });
       const doc = await task.promise;
       if (cacheKey) {
         globalPdfDocCache.set(cacheKey, doc);
       }
+      console.log('[Loader] Success: Direct PDF.js load successful.');
       return doc;
-    } catch (err) {
-      console.warn('Failed direct PDF.js URL loading:', err);
+    } catch (err: any) {
+      console.error('[Loader] Direct load failed:', err.message);
     }
   }
 
   if (!buffer) {
-    console.error('No PDF buffer available after all loading attempts.');
+    console.error('[Loader] All attempts to get PDF buffer failed.');
     return null;
   }
 
@@ -134,8 +137,8 @@ export async function getOrLoadPdfDoc(blobKey?: string, urlOrRawBuffer?: string 
       globalPdfDocCache.set(cacheKey, doc);
     }
     return doc;
-  } catch (err) {
-    console.warn('Failed to load PDF doc into global cache:', err);
+  } catch (err: any) {
+    console.error('[Loader] Error creating PDF task from buffer:', err.message);
     return null;
   }
 }
@@ -2105,7 +2108,11 @@ export async function convertPdfFileToKitab(
     totalPages: numPages,
     lastReadPage: 1,
     bookmarks: [1],
-    addedAt: 'Baru saja diunggah',
+    addedAt: new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }),
     isUploadedPdf: true,
     fileSizeLabel,
     coverTone: options.coverTone || 'terracotta',

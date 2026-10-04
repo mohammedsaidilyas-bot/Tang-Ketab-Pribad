@@ -65,12 +65,17 @@ export async function getStoragePdfUrl(kitabId: string): Promise<string | null> 
   }
 }
 
-// Firestore CRUD helpers for Kitabs and Notes
 export async function saveKitabToFirestore(kitab: KitabDocument) {
   try {
-    console.log(`Firestore Write: Saving kitab "${kitab.title}" (${kitab.id})`);
+    console.log(`Firestore Write: Saving kitab "${kitab.title}" (${kitab.id}). Cloud PDF: ${!!kitab.pdfUrl}`);
     const docRef = doc(db, 'kitabs', kitab.id);
     let dataToSave = JSON.parse(JSON.stringify(kitab));
+
+    // Ensure we don't accidentally save local blob keys to cloud if they shouldn't be there
+    // but we MUST save the pdfUrl
+    if (kitab.pdfUrl) {
+      dataToSave.pdfUrl = kitab.pdfUrl;
+    }
 
     // Check for document size limit (1MB). If too big, prune the pages text
     // as it's the largest part and we have the PDF file anyway.

@@ -426,6 +426,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   const [isScanningPdfToc, setIsScanningPdfToc] = useState(false);
   const [tocUpdateSuccessToast, setTocUpdateSuccessToast] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState<number | null>(null);
 
   const handleCopyPageText = (pageNumber: number, paragraphs: string[]) => {
@@ -464,28 +465,36 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       
       // Load from URL if available, then fallback to local
       const loadPdf = async () => {
+        setLoadingStatus('Sedang menyiapkan naskah PDF...');
         const timeout = setTimeout(() => {
           if (!isCancelled && !pdfDoc) {
             setInitError('Berkas PDF kitab tidak dapat dimuat dari cloud storage dalam waktu yang wajar. Mohon periksa kembali koneksi internet Anda atau coba unggah ulang kitab ini.');
+            setLoadingStatus(null);
           }
         }, 25000); // 25 seconds timeout
 
         try {
           let doc = null;
           if (kitab.pdfUrl) {
+            setLoadingStatus('Mengunduh naskah dari server cloud...');
             doc = await getOrLoadPdfDoc(kitab.pdfBlobKey, kitab.pdfUrl);
           } else if (kitab.pdfBlobKey) {
+            setLoadingStatus('Membuka naskah dari penyimpanan lokal...');
             doc = await getOrLoadPdfDoc(kitab.pdfBlobKey);
           }
           
           clearTimeout(timeout);
           if (!isCancelled && doc) {
+            setLoadingStatus('Merender halaman...');
             setPdfDoc(doc);
+            setInitError(null);
           } else if (!isCancelled && !doc) {
             setInitError('Sistem tidak menemukan berkas PDF asli di server cloud. Hal ini bisa terjadi jika koneksi terputus saat proses unggah sebelumnya.');
           }
+          setLoadingStatus(null);
         } catch (err: any) {
           clearTimeout(timeout);
+          setLoadingStatus(null);
           if (!isCancelled) {
             setInitError(`Terjadi hambatan teknis saat membuka PDF (${err.message || 'Masalah Jaringan'}). Silakan coba muat ulang atau gunakan tombol lampirkan manual di bawah.`);
           }
@@ -916,6 +925,27 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
     setJustSavedNote(true);
     setTimeout(() => setJustSavedNote(false), 1800);
   };
+
+  if (loadingStatus) {
+    return (
+      <section className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-8 bg-[#FBF9F5] min-h-[70vh]">
+        <div className="relative">
+          <div className="w-24 h-24 border-4 border-[#E5DEC9] border-t-[#78350F] rounded-full animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <BookOpen className="w-8 h-8 text-[#78350F] animate-pulse" />
+          </div>
+        </div>
+        <div className="space-y-3">
+          <h2 className="text-xl font-display font-semibold text-[#1C1917] animate-pulse">
+            {loadingStatus}
+          </h2>
+          <p className="text-xs text-[#57534E] max-w-xs mx-auto italic">
+            Mohon tunggu sejenak, kami sedang menyiapkan lembaran kitab di meja baca Anda.
+          </p>
+        </div>
+      </section>
+    );
+  }
 
   if (initError) {
     return (
