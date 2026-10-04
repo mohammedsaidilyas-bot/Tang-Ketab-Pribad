@@ -58,6 +58,7 @@ interface PocketBookReaderProps {
   onUpdateSettings: (partial: Partial<ReaderSettings>) => void;
   onPageChange: (newPage: number) => void;
   onUpdateChapters?: (kitabId: string, chapters: KitabChapter[]) => void;
+  onUpdateKitab?: (kitabId: string, partial: Partial<KitabDocument>) => void;
   onToggleBookmark: (pageNumber: number) => void;
   onAddNote: (note: Omit<HasyiyahNote, 'id' | 'createdAt'>) => void;
   onDeleteNote: (noteId: string) => void;
@@ -354,6 +355,11 @@ const PdfCanvasPage: React.FC<{
                 <p className="text-xs text-[#57534E] max-w-sm mx-auto leading-relaxed">
                   Pindaian visual PDF asli untuk lembar {pageNumber} sedang dimuat ke memori perangkat ini.
                 </p>
+                {!kitab.pdfUrl && (
+                  <p className="text-[10px] text-[#9A3412] bg-[#9A3412]/5 p-2 border border-[#9A3412]/20 rounded-xs max-w-xs mx-auto">
+                    Catatan: Tautan cloud belum tersedia. Silakan gunakan tombol di bawah untuk <strong>"Lampirkan Ulang"</strong> berkas aslinya agar tersimpan di cloud secara permanen.
+                  </p>
+                )}
                 <div className="pt-2">
                   <button
                     onClick={() => {
@@ -401,6 +407,7 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   onUpdateSettings,
   onPageChange,
   onUpdateChapters,
+  onUpdateKitab,
   onToggleBookmark,
   onAddNote,
   onDeleteNote,
@@ -473,6 +480,12 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
       const doc = await loadingTask.promise;
       globalPdfDocCache.set(key, doc);
       setPdfDoc(doc);
+      
+      // Also upload to cloud storage and update kitab in Firestore
+      const url = await uploadPdfToStorage(kitab.id, file);
+      if (url && onUpdateKitab) {
+        onUpdateKitab(kitab.id, { pdfUrl: url, pdfBlobKey: key });
+      }
     } catch (err) {
       console.error('Failed to attach PDF on this device:', err);
     }
