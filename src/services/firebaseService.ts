@@ -52,9 +52,23 @@ function toSharedKitab(kitab: KitabDocument): Record<string, unknown> {
 }
 
 function fromSharedKitab(data: Record<string, any>): KitabDocument {
+  // The actual PDF is shared through Firebase Storage, so we deliberately do
+  // not store hundreds of rendered page objects in Firestore. The reader,
+  // however, needs a page descriptor for every PDF page. Recreate lightweight
+  // descriptors here; the visible page image is rendered directly from the
+  // cloud PDF by PDF.js.
+  const totalPages = Math.max(1, Number(data.totalPages) || 1);
+  const pages = Array.isArray(data.pages) && data.pages.length > 0
+    ? data.pages
+    : Array.from({ length: totalPages }, (_, index) => ({
+        pageNumber: index + 1,
+        chapterTitle: '',
+        paragraphs: [],
+      }));
+
   return {
     ...data,
-    pages: [],
+    pages,
     chapters: Array.isArray(data.chapters) ? data.chapters : [],
     bookmarks: [],
     lastReadPage: 1,
