@@ -28,15 +28,16 @@ const authReady = auth.currentUser
 
 /**
  * Firestore is the shared catalogue for ALL users.
- * The PDF itself lives in Firebase Storage; Firestore only stores metadata and
- * the public download URL. We deliberately omit large/local-only fields such
- * as `pages` and `pdfBlobKey` so a kitab document stays comfortably below the
- * Firestore 1 MiB document limit.
+ * The PDF itself lives in Firebase Storage; Firestore stores only shared
+ * catalogue metadata and the download URL. Per-user reading state (bookmarks,
+ * lastReadPage) and large/local-only fields are intentionally excluded.
  */
 function toSharedKitab(kitab: KitabDocument): Record<string, unknown> {
   const {
     pages: _pages,
     pdfBlobKey: _pdfBlobKey,
+    bookmarks: _bookmarks,
+    lastReadPage: _lastReadPage,
     ...metadata
   } = kitab;
   return JSON.parse(JSON.stringify(metadata));
@@ -45,10 +46,10 @@ function toSharedKitab(kitab: KitabDocument): Record<string, unknown> {
 function fromSharedKitab(data: Record<string, any>): KitabDocument {
   return {
     ...data,
-    pages: Array.isArray(data.pages) ? data.pages : [],
+    pages: [],
     chapters: Array.isArray(data.chapters) ? data.chapters : [],
-    bookmarks: Array.isArray(data.bookmarks) ? data.bookmarks : [],
-    lastReadPage: Number(data.lastReadPage || 1),
+    bookmarks: [],
+    lastReadPage: 1,
     isUploadedPdf: Boolean(data.isUploadedPdf),
   } as KitabDocument;
 }
