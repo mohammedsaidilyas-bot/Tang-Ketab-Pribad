@@ -45,11 +45,16 @@ export interface KitabDocument {
   addedAt: string;
   isUploadedPdf: boolean;
   fileSizeLabel?: string;
+  fileSizeBytes?: number;
   coverTone: 'bronze' | 'lapis' | 'forest' | 'terracotta' | 'charcoal';
   chapters: KitabChapter[];
   pages: KitabPage[];
+  /** Stable per-device IndexedDB key. Never synced as a cloud field. */
   pdfBlobKey?: string;
+  /** Shared Firebase Storage download URL. */
   pdfUrl?: string;
+  /** Shared catalog version; increment when admin replaces the PDF. */
+  version?: number;
   coverOffset?: number;
 }
 
