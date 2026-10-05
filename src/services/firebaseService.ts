@@ -14,10 +14,12 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import { KitabDocument, HasyiyahNote } from '../types/kitab';
 
 const app = initializeApp(firebaseConfig);
-const storageBucket = (firebaseConfig as any).storageBucket as string | undefined;
-export const storage = storageBucket
-  ? getStorage(app, `gs://${storageBucket}`)
-  : getStorage(app);
+
+// Use the bucket declared by Firebase's own web configuration. Do not pass a
+// second bucket argument here: Capacitor/WebView builds can otherwise produce
+// an opaque storage/unknown error when the configured bucket is the new
+// *.firebasestorage.app bucket name.
+export const storage = getStorage(app);
 export const auth = getAuth(app);
 
 // IMPORTANT: this project uses a named Firestore database.
@@ -26,9 +28,6 @@ export const db = firestoreDatabaseId
   ? getFirestore(app, firestoreDatabaseId)
   : getFirestore(app);
 
-// Authenticate anonymously so Firebase services have valid credentials when
-// the project's security rules require authentication. If anonymous auth is
-// unavailable, public Storage/Firestore rules can still be used.
 const authReady = auth.currentUser
   ? Promise.resolve(auth.currentUser)
   : signInAnonymously(auth).catch((err) => {
@@ -67,15 +66,6 @@ function fromSharedKitab(data: Record<string, any>): KitabDocument {
   } as KitabDocument;
 }
 
-/**
- * Upload the original PDF to the shared Firebase Storage bucket.
- *
- * We intentionally use uploadBytes() instead of uploadBytesResumable() here.
- * The APK runs inside a Capacitor WebView, and resumable-upload sessions can
- * be more fragile there. uploadBytes() performs a single multipart request and
- * is sufficient for the app's 50 MB PDF limit. Firebase documents uploadBytes
- * as the standard Blob/File upload API.
- */
 export async function uploadPdfToStorage(
   kitabId: string,
   file: File,
@@ -92,14 +82,11 @@ export async function uploadPdfToStorage(
     onProgress?.(5);
 
     console.log('[Upload] Starting Firebase Storage upload', {
-      bucket: storageBucket,
       path: storageRef.fullPath,
       size: file.size,
       type: file.type || 'application/pdf',
     });
 
-    // Read the File into a Uint8Array first. This avoids Android WebView/File
-    // object edge cases while keeping the exact PDF bytes intact.
     const bytes = new Uint8Array(await file.arrayBuffer());
     onProgress?.(15);
 
@@ -116,17 +103,27 @@ export async function uploadPdfToStorage(
     console.log('[Upload] Firebase Storage upload complete:', cloudUrl);
     return cloudUrl;
   } catch (firebaseErr: any) {
-    console.error('[Upload] Firebase Storage upload failed:', {
-      code: firebaseErr?.code,
-      message: firebaseErr?.message,
-      serverResponse: firebaseErr?.serverResponse,
-      name: firebaseErr?.name,
-      bucket: storageBucket,
-      kitabId,
-    });
+    console.error('[Upload] Firebase Storage upload failed:', firebaseErr);
 
-    const code = firebaseErr?.code ? ` [${firebaseErr.code}]` : '';
-    throw new Error(`Gagal mengunggah PDF ke cloud${code}: ${firebaseErr?.message || 'unknown error'}`);
+    const code = firebaseErr?.code || 'storage/unknown';
+    const serverResponse = firebaseErr?.serverResponse;
+    const message = String(firebaseErr?.message || 'Unknown Firebase Storage error');
+
+    // Give the admin a useful diagnosis instead of the generic
+    // "storage/unknown" message returned by some Android WebView builds.
+    if (code === 'storage/unknown' || code === 'storage/bucket-not-found') {
+      throw new Error(
+        'Firebase Storage belum aktif/terhubung pada project. Buka Firebase Console → Storage → Get started, lalu pastikan bucket project gen-lang-client-0238728154 aktif. Setelah itu coba unggah kembali.'
+      );
+    }
+
+    if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+      throw new Error(
+        'Akses Firebase Storage ditolak. Pastikan Authentication dan Storage Rules mengizinkan pengguna aplikasi untuk mengunggah ke folder kitabs/.'
+      );
+    }
+
+    throw new Error(`Gagal mengunggah PDF ke cloud [${code}]: ${serverResponse || message}`);
   }
 }
 
@@ -140,7 +137,6 @@ export async function getStoragePdfUrl(kitabId: string): Promise<string | null> 
   }
 }
 
-/** Save a kitab to the one shared named Firestore catalogue. */
 export async function saveKitabToFirestore(kitab: KitabDocument) {
   await authReady;
   await setDoc(doc(db, 'kitabs', kitab.id), toSharedKitab(kitab), { merge: true });
@@ -151,7 +147,6 @@ export async function deleteKitabFromFirestore(kitabId: string) {
   await deleteDoc(doc(db, 'kitabs', kitabId));
 }
 
-/** Real-time global catalogue. Any published/admin upload appears on every connected user. */
 export function subscribeToKitabs(callback: (kitabs: KitabDocument[]) => void): Unsubscribe {
   return onSnapshot(
     collection(db, 'kitabs'),
