@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
-import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
   getFirestore,
   collection,
@@ -14,32 +14,28 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import { KitabDocument, HasyiyahNote } from '../types/kitab';
 
 const app = initializeApp(firebaseConfig);
-export const storage = getStorage(app);
+const storageBucket = (firebaseConfig as any).storageBucket as string | undefined;
+export const storage = storageBucket
+  ? getStorage(app, `gs://${storageBucket}`)
+  : getStorage(app);
 export const auth = getAuth(app);
 
-// IMPORTANT: this project uses a named Firestore database. The old code used
-// getFirestore(app), which connects to the default database and therefore made
-// each APK appear to have an empty/shared catalogue even though the web app had
-// data in the named database.
+// IMPORTANT: this project uses a named Firestore database.
 const firestoreDatabaseId = (firebaseConfig as any).firestoreDatabaseId as string | undefined;
 export const db = firestoreDatabaseId
   ? getFirestore(app, firestoreDatabaseId)
   : getFirestore(app);
 
-// Authenticate anonymously so Firebase Storage and Firestore have valid credentials.
+// Authenticate anonymously so Firebase services have valid credentials when
+// the project's security rules require authentication. If anonymous auth is
+// unavailable, public Storage/Firestore rules can still be used.
 const authReady = auth.currentUser
   ? Promise.resolve(auth.currentUser)
   : signInAnonymously(auth).catch((err) => {
-      console.log('[Auth] Anonymous authentication note:', err?.message || err);
+      console.warn('[Auth] Anonymous authentication unavailable:', err?.message || err);
       return null;
     });
 
-/**
- * Firestore is the shared catalogue for ALL users.
- * The PDF itself lives in Firebase Storage; Firestore stores only shared
- * catalogue metadata and the download URL. Per-user reading state and large
- * local-only fields are intentionally excluded.
- */
 function toSharedKitab(kitab: KitabDocument): Record<string, unknown> {
   const {
     pages: _pages,
@@ -52,11 +48,6 @@ function toSharedKitab(kitab: KitabDocument): Record<string, unknown> {
 }
 
 function fromSharedKitab(data: Record<string, any>): KitabDocument {
-  // The actual PDF is shared through Firebase Storage, so we deliberately do
-  // not store hundreds of rendered page objects in Firestore. The reader,
-  // however, needs a page descriptor for every PDF page. Recreate lightweight
-  // descriptors here; the visible page image is rendered directly from the
-  // cloud PDF by PDF.js.
   const totalPages = Math.max(1, Number(data.totalPages) || 1);
   const pages = Array.isArray(data.pages) && data.pages.length > 0
     ? data.pages
@@ -76,6 +67,15 @@ function fromSharedKitab(data: Record<string, any>): KitabDocument {
   } as KitabDocument;
 }
 
+/**
+ * Upload the original PDF to the shared Firebase Storage bucket.
+ *
+ * We intentionally use uploadBytes() instead of uploadBytesResumable() here.
+ * The APK runs inside a Capacitor WebView, and resumable-upload sessions can
+ * be more fragile there. uploadBytes() performs a single multipart request and
+ * is sufficient for the app's 50 MB PDF limit. Firebase documents uploadBytes
+ * as the standard Blob/File upload API.
+ */
 export async function uploadPdfToStorage(
   kitabId: string,
   file: File,
@@ -83,36 +83,50 @@ export async function uploadPdfToStorage(
 ): Promise<string> {
   try {
     await authReady;
+
+    if (!file || file.size <= 0) {
+      throw new Error('Berkas PDF kosong atau tidak dapat dibaca oleh perangkat.');
+    }
+
     const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
-    const uploadTask = uploadBytesResumable(storageRef, file, {
+    onProgress?.(5);
+
+    console.log('[Upload] Starting Firebase Storage upload', {
+      bucket: storageBucket,
+      path: storageRef.fullPath,
+      size: file.size,
+      type: file.type || 'application/pdf',
+    });
+
+    // Read the File into a Uint8Array first. This avoids Android WebView/File
+    // object edge cases while keeping the exact PDF bytes intact.
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    onProgress?.(15);
+
+    const result = await uploadBytes(storageRef, bytes, {
       contentType: 'application/pdf',
+      contentDisposition: 'inline',
+      cacheControl: 'public,max-age=3600',
     });
 
-    const cloudUrl = await new Promise<string>((resolve, reject) => {
-      uploadTask.on(
-        'state_changed',
-        (snapshot) => {
-          const percent = snapshot.totalBytes > 0
-            ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
-            : 0;
-          onProgress?.(percent);
-        },
-        reject,
-        async () => {
-          try {
-            resolve(await getDownloadURL(uploadTask.snapshot.ref));
-          } catch (error) {
-            reject(error);
-          }
-        }
-      );
-    });
-
+    onProgress?.(85);
+    const cloudUrl = await getDownloadURL(result.ref);
     onProgress?.(100);
+
+    console.log('[Upload] Firebase Storage upload complete:', cloudUrl);
     return cloudUrl;
   } catch (firebaseErr: any) {
-    console.error('[Upload] Firebase Storage upload failed:', firebaseErr);
-    throw new Error(`Gagal mengunggah PDF ke cloud: ${firebaseErr?.message || 'unknown error'}`);
+    console.error('[Upload] Firebase Storage upload failed:', {
+      code: firebaseErr?.code,
+      message: firebaseErr?.message,
+      serverResponse: firebaseErr?.serverResponse,
+      name: firebaseErr?.name,
+      bucket: storageBucket,
+      kitabId,
+    });
+
+    const code = firebaseErr?.code ? ` [${firebaseErr.code}]` : '';
+    throw new Error(`Gagal mengunggah PDF ke cloud${code}: ${firebaseErr?.message || 'unknown error'}`);
   }
 }
 
@@ -120,7 +134,8 @@ export async function getStoragePdfUrl(kitabId: string): Promise<string | null> 
   try {
     await authReady;
     return await getDownloadURL(ref(storage, `kitabs/${kitabId}.pdf`));
-  } catch {
+  } catch (error) {
+    console.warn('[Storage] PDF URL not found:', kitabId, error);
     return null;
   }
 }
