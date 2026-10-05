@@ -25,11 +25,81 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
 
-  // Kitabs Registry API
+  // Kitabs Registry API with automatic folder scanning
   app.get('/api/kitabs', (req, res) => {
     try {
       const data = fs.readFileSync(kitabsJsonPath, 'utf8');
-      res.json(JSON.parse(data || '[]'));
+      let kitabs: any[] = JSON.parse(data || '[]');
+
+      // Auto-scan uploads directory for any unindexed PDF files
+      if (fs.existsSync(uploadsDir)) {
+        const files = fs.readdirSync(uploadsDir);
+        let updated = false;
+
+        files.forEach((fileName) => {
+          if (fileName.toLowerCase().endsWith('.pdf')) {
+            const rawId = fileName.replace(/\.pdf$/i, '');
+            // Check if this PDF is already registered by ID or pdfUrl
+            const exists = kitabs.some(
+              (k: any) =>
+                k.id === rawId ||
+                k.pdfUrl === `/api/pdf/${rawId}` ||
+                k.pdfUrl?.includes(fileName)
+            );
+
+            if (!exists) {
+              const cleanTitle = rawId.replace(/^kitab[-_]/i, '').replace(/[-_]+/g, ' ').trim();
+              const formattedTitle = cleanTitle.charAt(0).toUpperCase() + cleanTitle.slice(1) || 'Kitab Server';
+
+              const newServerKitab = {
+                id: rawId,
+                catalogNumber: `TK-SRV.${Math.floor(100 + Math.random() * 899)}`,
+                title: formattedTitle,
+                subtitle: `Diunggah langsung ke server (${fileName})`,
+                author: 'Koleksi Maktabah Server',
+                category: 'Maktabah Server',
+                language: 'Dokumen PDF · PocketBook',
+                totalPages: 100,
+                lastReadPage: 1,
+                bookmarks: [1],
+                addedAt: new Date().toLocaleDateString('id-ID', {
+                  day: '2-digit',
+                  month: 'short',
+                  year: 'numeric',
+                }),
+                isUploadedPdf: true,
+                pdfUrl: `/api/pdf/${rawId}`,
+                fileSizeLabel: 'PDF Server',
+                coverTone: 'bronze',
+                chapters: [
+                  {
+                    id: 'ch-srv-1',
+                    number: '01',
+                    title: 'مقدمة الكتاب',
+                    startPage: 1,
+                  },
+                ],
+                pages: Array.from({ length: 100 }, (_, i) => ({
+                  pageNumber: i + 1,
+                  chapterTitle: 'مقدمة الكتاب',
+                  paragraphs: [`[Halaman ${i + 1} · Dokumen PDF Asli Server]`],
+                  footnote: `Dokumen PDF Server "${fileName}" · Lembar ${i + 1}`,
+                })),
+              };
+
+              kitabs.unshift(newServerKitab);
+              updated = true;
+              console.log(`[Server Auto-Scan] Automatically indexed PDF file: ${fileName}`);
+            }
+          }
+        });
+
+        if (updated) {
+          fs.writeFileSync(kitabsJsonPath, JSON.stringify(kitabs, null, 2));
+        }
+      }
+
+      res.json(kitabs);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
