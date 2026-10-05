@@ -22,7 +22,7 @@ export async function uploadPdfToStorage(
   console.log(`Starting PDF upload for kitab: ${kitabId}, size: ${file.size} bytes`);
   let serverUrl = '';
 
-  // 1. Upload to Server Storage Endpoint
+  // 1. Upload to Server Storage Endpoint (Primary & Instant)
   try {
     const resp = await fetch(`/api/upload-pdf?kitabId=${encodeURIComponent(kitabId)}`, {
       method: 'POST',
@@ -35,61 +35,32 @@ export async function uploadPdfToStorage(
       const data = await resp.json();
       serverUrl = data.url || `/api/pdf/${kitabId}`;
       console.log(`[Upload] Server disk upload successful: ${serverUrl}`);
-      if (onProgress) onProgress(50);
+      if (onProgress) onProgress(100);
     }
   } catch (serverErr) {
-    console.warn('[Upload] Server disk upload error, continuing to cloud storage...', serverErr);
+    console.warn('[Upload] Server disk upload error:', serverErr);
   }
 
-  // 2. Upload to Firebase Storage
+  const finalUrl = serverUrl || `/api/pdf/${kitabId}`;
+
+  // 2. Non-blocking best-effort sync to Firebase Storage
   if (storage) {
     try {
       const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
-      const uploadTask = uploadBytesResumable(storageRef, file, {
+      uploadBytesResumable(storageRef, file, {
         contentType: 'application/pdf',
-        customMetadata: {
-          originalName: file.name,
-          uploadedAt: new Date().toISOString()
-        }
-      });
-
-      return await new Promise<string>((resolve) => {
-        uploadTask.on(
-          'state_changed',
-          (snapshot) => {
-            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 50 + 50;
-            if (onProgress) onProgress(Math.min(100, progress));
-          },
-          (error) => {
-            console.warn('[Upload] Firebase Storage upload error, using server URL fallback:', error);
-            if (serverUrl) {
-              resolve(serverUrl);
-            } else {
-              resolve(`/api/pdf/${kitabId}`);
-            }
-          },
-          async () => {
-            try {
-              const url = await getDownloadURL(uploadTask.snapshot.ref);
-              console.log(`[Upload] Firebase Storage upload successful. URL: ${url}`);
-              resolve(url);
-            } catch {
-              resolve(serverUrl || `/api/pdf/${kitabId}`);
-            }
-          }
-        );
+      }).then(async (snapshot) => {
+        const cloudUrl = await getDownloadURL(snapshot.ref);
+        console.log(`[Upload] Background Firebase Storage sync completed: ${cloudUrl}`);
+      }).catch((err) => {
+        console.warn('[Upload] Non-blocking Firebase Storage background note:', err?.message || err);
       });
     } catch (e: any) {
-      console.warn('[Upload] Firebase Storage exception, using server storage fallback:', e);
+      console.warn('[Upload] Firebase Storage exception:', e);
     }
   }
 
-  if (serverUrl) {
-    if (onProgress) onProgress(100);
-    return serverUrl;
-  }
-
-  return `/api/pdf/${kitabId}`;
+  return finalUrl;
 }
 
 export async function getStoragePdfUrl(kitabId: string): Promise<string | null> {
