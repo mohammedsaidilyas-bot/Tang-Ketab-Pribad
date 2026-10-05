@@ -1,14 +1,24 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import {
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+  type Unsubscribe,
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { KitabDocument, HasyiyahNote } from '../types/kitab';
 
 const app = initializeApp(firebaseConfig);
 export const storage = getStorage(app);
 export const auth = getAuth(app);
+export const db = getFirestore(app);
 
-// Authenticate anonymously so Firebase Storage has valid credentials.
+// Authenticate anonymously so Firebase Storage and Firestore have valid credentials.
 const authReady = auth.currentUser
   ? Promise.resolve(auth.currentUser)
   : signInAnonymously(auth).catch((err) => {
@@ -16,37 +26,40 @@ const authReady = auth.currentUser
       return null;
     });
 
-// Upload PDFs to Firebase Storage and optionally mirror them to the web server.
-// IMPORTANT: the returned URL must be the Firebase URL so the Android APK can
-// reopen the book even though it does not run the Express /api server.
+/**
+ * Firestore is the shared catalogue for ALL users.
+ * The PDF itself lives in Firebase Storage; Firestore only stores metadata and
+ * the public download URL. We deliberately omit large/local-only fields such
+ * as `pages` and `pdfBlobKey` so a kitab document stays comfortably below the
+ * Firestore 1 MiB document limit.
+ */
+function toSharedKitab(kitab: KitabDocument): Record<string, unknown> {
+  const {
+    pages: _pages,
+    pdfBlobKey: _pdfBlobKey,
+    ...metadata
+  } = kitab;
+  return JSON.parse(JSON.stringify(metadata));
+}
+
+function fromSharedKitab(data: Record<string, any>): KitabDocument {
+  return {
+    ...data,
+    pages: Array.isArray(data.pages) ? data.pages : [],
+    chapters: Array.isArray(data.chapters) ? data.chapters : [],
+    bookmarks: Array.isArray(data.bookmarks) ? data.bookmarks : [],
+    lastReadPage: Number(data.lastReadPage || 1),
+    isUploadedPdf: Boolean(data.isUploadedPdf),
+  } as KitabDocument;
+}
+
+// Upload PDFs to Firebase Storage. The Storage path is shared, not user-specific.
 export async function uploadPdfToStorage(
   kitabId: string,
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<string> {
   console.log(`Starting PDF upload for kitab: ${kitabId}, size: ${file.size} bytes`);
-
-  let serverUrl = '';
-  try {
-    const resp = await fetch(`/api/upload-pdf?kitabId=${encodeURIComponent(kitabId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/pdf' },
-      body: file,
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      serverUrl = data.url || `/api/pdf/${kitabId}`;
-      console.log(`[Upload] Server mirror upload successful: ${serverUrl}`);
-    }
-  } catch (serverErr) {
-    // Expected in the Android APK because there is no local Express server.
-    console.log('[Upload] Server mirror unavailable; continuing with Firebase Storage.');
-  }
-
-  if (!storage) {
-    if (serverUrl) return serverUrl;
-    throw new Error('Firebase Storage belum tersedia.');
-  }
 
   try {
     await authReady;
@@ -80,117 +93,84 @@ export async function uploadPdfToStorage(
     return cloudUrl;
   } catch (firebaseErr: any) {
     console.error('[Upload] Firebase Storage upload failed:', firebaseErr);
-    // Web deployments can still use the server copy, but never return a fake
-    // /api URL in the APK when Firebase upload failed.
-    if (serverUrl) return serverUrl;
     throw new Error(`Gagal mengunggah PDF ke cloud: ${firebaseErr?.message || 'unknown error'}`);
   }
 }
 
 export async function getStoragePdfUrl(kitabId: string): Promise<string | null> {
-  // Firebase is the portable source of truth for Android and web.
-  if (storage) {
-    try {
-      const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
-      return await getDownloadURL(storageRef);
-    } catch {
-      // Continue to the server mirror fallback.
-    }
-  }
-
   try {
-    const checkResp = await fetch(`/api/has-pdf/${encodeURIComponent(kitabId)}`);
-    if (checkResp.ok) {
-      const data = await checkResp.json();
-      if (data.exists) return `/api/pdf/${kitabId}`;
-    }
+    await authReady;
+    const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
+    return await getDownloadURL(storageRef);
   } catch {
-    // ignore
+    return null;
   }
-
-  return null;
 }
 
-// Server-side registry persistence for web deployments.
+/** Save a kitab to the ONE shared catalogue used by every installation. */
 export async function saveKitabToFirestore(kitab: KitabDocument) {
   try {
-    const resp = await fetch('/api/kitabs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(kitab),
-    });
-    if (!resp.ok) console.warn('Failed to save kitab to server registry:', resp.statusText);
+    await authReady;
+    await setDoc(doc(db, 'kitabs', kitab.id), toSharedKitab(kitab), { merge: true });
+    console.log(`[Registry] Shared kitab saved: ${kitab.id}`);
   } catch (e) {
-    console.log('[Registry] Server registry unavailable in standalone APK.');
+    console.error('[Registry] Failed to save shared kitab:', e);
   }
 }
 
 export async function deleteKitabFromFirestore(kitabId: string) {
   try {
-    await fetch(`/api/kitabs/${encodeURIComponent(kitabId)}`, { method: 'DELETE' });
+    await authReady;
+    await deleteDoc(doc(db, 'kitabs', kitabId));
   } catch (e) {
-    console.log('[Registry] Server delete unavailable in standalone APK.');
+    console.error('[Registry] Failed to delete shared kitab:', e);
   }
+}
+
+/** Real-time global catalogue. Any admin upload appears on every connected user. */
+export function subscribeToKitabs(callback: (kitabs: KitabDocument[]) => void): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'kitabs'),
+    (snapshot) => {
+      const items = snapshot.docs
+        .map((item) => fromSharedKitab({ id: item.id, ...item.data() }))
+        .filter((item) => item.isUploadedPdf);
+      callback(items);
+    },
+    (error) => {
+      console.error('[Registry] Shared kitab subscription failed:', error);
+      callback([]);
+    }
+  );
 }
 
 export async function saveNoteToFirestore(note: HasyiyahNote) {
   try {
-    await fetch('/api/notes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(note),
-    });
+    await authReady;
+    await setDoc(doc(db, 'notes', note.id), JSON.parse(JSON.stringify(note)), { merge: true });
   } catch (e) {
-    console.log('[Notes] Server registry unavailable in standalone APK.');
+    console.error('[Notes] Failed to save note:', e);
   }
 }
 
 export async function deleteNoteFromFirestore(noteId: string) {
   try {
-    await fetch(`/api/notes/${encodeURIComponent(noteId)}`, { method: 'DELETE' });
+    await authReady;
+    await deleteDoc(doc(db, 'notes', noteId));
   } catch (e) {
-    console.log('[Notes] Server delete unavailable in standalone APK.');
+    console.error('[Notes] Failed to delete note:', e);
   }
 }
 
-export function subscribeToKitabs(callback: (kitabs: KitabDocument[]) => void) {
-  let isCancelled = false;
-  const fetchKitabs = async () => {
-    try {
-      const resp = await fetch('/api/kitabs');
-      if (resp.ok) {
-        const items: KitabDocument[] = await resp.json();
-        if (!isCancelled && Array.isArray(items) && items.length > 0) callback(items);
-      }
-    } catch {
-      // Standalone APK intentionally has no /api server; localStorage remains authoritative.
+export function subscribeToNotes(callback: (notes: HasyiyahNote[]) => void): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'notes'),
+    (snapshot) => {
+      callback(snapshot.docs.map((item) => item.data() as HasyiyahNote));
+    },
+    (error) => {
+      console.error('[Notes] Shared notes subscription failed:', error);
+      callback([]);
     }
-  };
-  fetchKitabs();
-  const interval = setInterval(fetchKitabs, 4000);
-  return () => {
-    isCancelled = true;
-    clearInterval(interval);
-  };
-}
-
-export function subscribeToNotes(callback: (notes: HasyiyahNote[]) => void) {
-  let isCancelled = false;
-  const fetchNotes = async () => {
-    try {
-      const resp = await fetch('/api/notes');
-      if (resp.ok) {
-        const items: HasyiyahNote[] = await resp.json();
-        if (!isCancelled && Array.isArray(items)) callback(items);
-      }
-    } catch {
-      // Standalone APK intentionally has no /api server.
-    }
-  };
-  fetchNotes();
-  const interval = setInterval(fetchNotes, 4000);
-  return () => {
-    isCancelled = true;
-    clearInterval(interval);
-  };
+  );
 }
