@@ -8,6 +8,11 @@ const config: CapacitorConfig = {
   android: {
     backgroundColor: '#0b0f0d',
   },
+  plugins: {
+    CapacitorHttp: {
+      enabled: true,
+    },
+  },
 };
 
 export default config;
