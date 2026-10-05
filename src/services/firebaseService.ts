@@ -15,14 +15,11 @@ import { KitabDocument, HasyiyahNote } from '../types/kitab';
 
 const app = initializeApp(firebaseConfig);
 
-// Use the bucket declared by Firebase's own web configuration. Do not pass a
-// second bucket argument here: Capacitor/WebView builds can otherwise produce
-// an opaque storage/unknown error when the configured bucket is the new
-// *.firebasestorage.app bucket name.
+// One shared Storage bucket for the whole application.
 export const storage = getStorage(app);
 export const auth = getAuth(app);
 
-// IMPORTANT: this project uses a named Firestore database.
+// This project uses a named Firestore database.
 const firestoreDatabaseId = (firebaseConfig as any).firestoreDatabaseId as string | undefined;
 export const db = firestoreDatabaseId
   ? getFirestore(app, firestoreDatabaseId)
@@ -35,6 +32,10 @@ const authReady = auth.currentUser
       return null;
     });
 
+/**
+ * Firestore is the shared catalog only. PDF bytes, page cache, bookmarks and
+ * last-read position are deliberately kept on each device.
+ */
 function toSharedKitab(kitab: KitabDocument): Record<string, unknown> {
   const {
     pages: _pages,
@@ -47,18 +48,12 @@ function toSharedKitab(kitab: KitabDocument): Record<string, unknown> {
 }
 
 function fromSharedKitab(data: Record<string, any>): KitabDocument {
-  const totalPages = Math.max(1, Number(data.totalPages) || 1);
-  const pages = Array.isArray(data.pages) && data.pages.length > 0
-    ? data.pages
-    : Array.from({ length: totalPages }, (_, index) => ({
-        pageNumber: index + 1,
-        chapterTitle: '',
-        paragraphs: [],
-      }));
-
   return {
     ...data,
-    pages,
+    // Every device derives the same local cache key from the shared kitab id.
+    // This value is NOT written to Firestore.
+    pdfBlobKey: String(data.id || ''),
+    pages: [],
     chapters: Array.isArray(data.chapters) ? data.chapters : [],
     bookmarks: [],
     lastReadPage: 1,
@@ -81,7 +76,7 @@ export async function uploadPdfToStorage(
     const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
     onProgress?.(5);
 
-    console.log('[Upload] Starting Firebase Storage upload', {
+    console.log('[Admin Upload] Shared kitab upload started', {
       path: storageRef.fullPath,
       size: file.size,
       type: file.type || 'application/pdf',
@@ -93,6 +88,7 @@ export async function uploadPdfToStorage(
     const result = await uploadBytes(storageRef, bytes, {
       contentType: 'application/pdf',
       contentDisposition: 'inline',
+      // Allow the same installed app to reuse cached copies for one hour.
       cacheControl: 'public,max-age=3600',
     });
 
@@ -100,26 +96,24 @@ export async function uploadPdfToStorage(
     const cloudUrl = await getDownloadURL(result.ref);
     onProgress?.(100);
 
-    console.log('[Upload] Firebase Storage upload complete:', cloudUrl);
+    console.log('[Admin Upload] Shared PDF is now available:', cloudUrl);
     return cloudUrl;
   } catch (firebaseErr: any) {
-    console.error('[Upload] Firebase Storage upload failed:', firebaseErr);
+    console.error('[Admin Upload] Firebase Storage upload failed:', firebaseErr);
 
     const code = firebaseErr?.code || 'storage/unknown';
     const serverResponse = firebaseErr?.serverResponse;
     const message = String(firebaseErr?.message || 'Unknown Firebase Storage error');
 
-    // Give the admin a useful diagnosis instead of the generic
-    // "storage/unknown" message returned by some Android WebView builds.
     if (code === 'storage/unknown' || code === 'storage/bucket-not-found') {
       throw new Error(
-        'Firebase Storage belum aktif/terhubung pada project. Buka Firebase Console → Storage → Get started, lalu pastikan bucket project gen-lang-client-0238728154 aktif. Setelah itu coba unggah kembali.'
+        'Firebase Storage belum aktif/terhubung pada project. Buka Firebase Console → Storage → Get started, lalu pastikan bucket project aktif.'
       );
     }
 
     if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
       throw new Error(
-        'Akses Firebase Storage ditolak. Pastikan Authentication dan Storage Rules mengizinkan pengguna aplikasi untuk mengunggah ke folder kitabs/.'
+        'Akses Firebase Storage ditolak. Pastikan Storage Rules mengizinkan hanya akun admin untuk mengunggah ke folder kitabs/.'
       );
     }
 
@@ -132,9 +126,63 @@ export async function getStoragePdfUrl(kitabId: string): Promise<string | null> 
     await authReady;
     return await getDownloadURL(ref(storage, `kitabs/${kitabId}.pdf`));
   } catch (error) {
-    console.warn('[Storage] PDF URL not found:', kitabId, error);
+    console.warn('[Storage] Shared PDF URL not found:', kitabId, error);
     return null;
   }
+}
+
+/**
+ * Returns the shared PDF bytes. The caller stores them in IndexedDB on the
+ * current device. It is intentionally separate from Firestore metadata.
+ */
+export async function downloadSharedPdf(
+  kitabId: string,
+  pdfUrl?: string,
+  onProgress?: (percent: number) => void
+): Promise<ArrayBuffer> {
+  await authReady;
+  const url = pdfUrl || (await getStoragePdfUrl(kitabId));
+  if (!url) {
+    throw new Error('PDF kitab belum tersedia di penyimpanan pusat.');
+  }
+
+  onProgress?.(5);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Gagal mengunduh PDF (${response.status}).`);
+  }
+
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  const reader = response.body?.getReader();
+
+  if (!reader) {
+    const buffer = await response.arrayBuffer();
+    onProgress?.(100);
+    return buffer;
+  }
+
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      chunks.push(value);
+      received += value.byteLength;
+      if (contentLength > 0) {
+        onProgress?.(Math.min(99, Math.round((received / contentLength) * 100)));
+      }
+    }
+  }
+
+  const buffer = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  onProgress?.(100);
+  return buffer.buffer;
 }
 
 export async function saveKitabToFirestore(kitab: KitabDocument) {
@@ -153,7 +201,7 @@ export function subscribeToKitabs(callback: (kitabs: KitabDocument[]) => void): 
     (snapshot) => {
       const items = snapshot.docs
         .map((item) => fromSharedKitab({ id: item.id, ...item.data() }))
-        .filter((item) => item.isUploadedPdf);
+        .filter((item) => item.isUploadedPdf && Boolean(item.pdfUrl));
       callback(items);
     },
     (error) => {
