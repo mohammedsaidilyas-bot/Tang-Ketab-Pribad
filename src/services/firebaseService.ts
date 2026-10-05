@@ -16,7 +16,15 @@ import { KitabDocument, HasyiyahNote } from '../types/kitab';
 const app = initializeApp(firebaseConfig);
 export const storage = getStorage(app);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// IMPORTANT: this project uses a named Firestore database. The old code used
+// getFirestore(app), which connects to the default database and therefore made
+// each APK appear to have an empty/shared catalogue even though the web app had
+// data in the named database.
+const firestoreDatabaseId = (firebaseConfig as any).firestoreDatabaseId as string | undefined;
+export const db = firestoreDatabaseId
+  ? getFirestore(app, firestoreDatabaseId)
+  : getFirestore(app);
 
 // Authenticate anonymously so Firebase Storage and Firestore have valid credentials.
 const authReady = auth.currentUser
@@ -29,8 +37,8 @@ const authReady = auth.currentUser
 /**
  * Firestore is the shared catalogue for ALL users.
  * The PDF itself lives in Firebase Storage; Firestore stores only shared
- * catalogue metadata and the download URL. Per-user reading state (bookmarks,
- * lastReadPage) and large/local-only fields are intentionally excluded.
+ * catalogue metadata and the download URL. Per-user reading state and large
+ * local-only fields are intentionally excluded.
  */
 function toSharedKitab(kitab: KitabDocument): Record<string, unknown> {
   const {
@@ -54,14 +62,11 @@ function fromSharedKitab(data: Record<string, any>): KitabDocument {
   } as KitabDocument;
 }
 
-// Upload PDFs to Firebase Storage. The Storage path is shared, not user-specific.
 export async function uploadPdfToStorage(
   kitabId: string,
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<string> {
-  console.log(`Starting PDF upload for kitab: ${kitabId}, size: ${file.size} bytes`);
-
   try {
     await authReady;
     const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
@@ -78,7 +83,7 @@ export async function uploadPdfToStorage(
             : 0;
           onProgress?.(percent);
         },
-        (error) => reject(error),
+        reject,
         async () => {
           try {
             resolve(await getDownloadURL(uploadTask.snapshot.ref));
@@ -89,7 +94,6 @@ export async function uploadPdfToStorage(
       );
     });
 
-    console.log(`[Upload] Firebase Storage upload completed: ${cloudUrl}`);
     onProgress?.(100);
     return cloudUrl;
   } catch (firebaseErr: any) {
@@ -101,34 +105,24 @@ export async function uploadPdfToStorage(
 export async function getStoragePdfUrl(kitabId: string): Promise<string | null> {
   try {
     await authReady;
-    const storageRef = ref(storage, `kitabs/${kitabId}.pdf`);
-    return await getDownloadURL(storageRef);
+    return await getDownloadURL(ref(storage, `kitabs/${kitabId}.pdf`));
   } catch {
     return null;
   }
 }
 
-/** Save a kitab to the ONE shared catalogue used by every installation. */
+/** Save a kitab to the one shared named Firestore catalogue. */
 export async function saveKitabToFirestore(kitab: KitabDocument) {
-  try {
-    await authReady;
-    await setDoc(doc(db, 'kitabs', kitab.id), toSharedKitab(kitab), { merge: true });
-    console.log(`[Registry] Shared kitab saved: ${kitab.id}`);
-  } catch (e) {
-    console.error('[Registry] Failed to save shared kitab:', e);
-  }
+  await authReady;
+  await setDoc(doc(db, 'kitabs', kitab.id), toSharedKitab(kitab), { merge: true });
 }
 
 export async function deleteKitabFromFirestore(kitabId: string) {
-  try {
-    await authReady;
-    await deleteDoc(doc(db, 'kitabs', kitabId));
-  } catch (e) {
-    console.error('[Registry] Failed to delete shared kitab:', e);
-  }
+  await authReady;
+  await deleteDoc(doc(db, 'kitabs', kitabId));
 }
 
-/** Real-time global catalogue. Any admin upload appears on every connected user. */
+/** Real-time global catalogue. Any published/admin upload appears on every connected user. */
 export function subscribeToKitabs(callback: (kitabs: KitabDocument[]) => void): Unsubscribe {
   return onSnapshot(
     collection(db, 'kitabs'),
@@ -146,29 +140,19 @@ export function subscribeToKitabs(callback: (kitabs: KitabDocument[]) => void): 
 }
 
 export async function saveNoteToFirestore(note: HasyiyahNote) {
-  try {
-    await authReady;
-    await setDoc(doc(db, 'notes', note.id), JSON.parse(JSON.stringify(note)), { merge: true });
-  } catch (e) {
-    console.error('[Notes] Failed to save note:', e);
-  }
+  await authReady;
+  await setDoc(doc(db, 'notes', note.id), JSON.parse(JSON.stringify(note)), { merge: true });
 }
 
 export async function deleteNoteFromFirestore(noteId: string) {
-  try {
-    await authReady;
-    await deleteDoc(doc(db, 'notes', noteId));
-  } catch (e) {
-    console.error('[Notes] Failed to delete note:', e);
-  }
+  await authReady;
+  await deleteDoc(doc(db, 'notes', noteId));
 }
 
 export function subscribeToNotes(callback: (notes: HasyiyahNote[]) => void): Unsubscribe {
   return onSnapshot(
     collection(db, 'notes'),
-    (snapshot) => {
-      callback(snapshot.docs.map((item) => item.data() as HasyiyahNote));
-    },
+    (snapshot) => callback(snapshot.docs.map((item) => item.data() as HasyiyahNote)),
     (error) => {
       console.error('[Notes] Shared notes subscription failed:', error);
       callback([]);
