@@ -42,14 +42,18 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
       setErrorMsg('Mohon pilih berkas berformat .PDF untuk dikonversi menjadi PocketBook.');
       return;
     }
-    if (file.size > 50 * 1024 * 1024) {
-      setErrorMsg('Berkas terlalu besar (Maks. 50MB). Mohon gunakan berkas PDF yang lebih kecil agar proses muat cloud lancar.');
+    if (file.size > 200 * 1024 * 1024) {
+      setErrorMsg('Berkas melebihi batas 200MB. Mohon gunakan berkas PDF berukuran maksimal 200MB agar proses lancar.');
       return;
     }
     setSelectedFile(file);
-    if (!customTitle) {
-      const cleanName = file.name.replace(/\.pdf$/i, '').replace(/[-_]+/g, ' ');
-      setCustomTitle(cleanName);
+    const cleanName = file.name
+      .replace(/\.pdf$/i, '')
+      .replace(/^kitab[-_\s]*/i, '')
+      .replace(/[-_]+/g, ' ')
+      .trim();
+    if (cleanName) {
+      setCustomTitle(cleanName.charAt(0).toUpperCase() + cleanName.slice(1));
     }
   };
 
@@ -79,15 +83,21 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
         coverTone,
         password: password.trim() || undefined,
         onProgress: (current, total) => {
-          if (current === total) {
-            setProgress({ current, total, status: 'uploading', percent: 0 });
-          } else {
-            setProgress({ current, total, status: 'converting' });
-          }
+          setProgress((prev) => ({
+            current,
+            total,
+            status: prev?.status === 'uploading' ? 'uploading' : 'converting',
+            percent: prev?.percent,
+          }));
         },
         onUploadProgress: (percent) => {
-          setProgress(prev => prev ? { ...prev, status: 'uploading', percent: Math.round(percent) } : null);
-        }
+          setProgress((prev) => ({
+            current: prev?.current || 1,
+            total: prev?.total || 1,
+            status: 'uploading',
+            percent: Math.round(percent),
+          }));
+        },
       });
       setIsConverting(false);
       onKitabCreated(newKitab);
@@ -192,12 +202,19 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
             )}
           </div>
 
-          {/* Format Compatibility Note */}
-          <div className="flex items-center gap-2.5 px-4 py-2.5 bg-[#F3EFE6] border border-[#E5DEC9] text-xs text-[#57534E]">
-            <CheckCircle2 className="w-4 h-4 text-[#14532D] shrink-0" />
-            <span>
-              Mendukung segala format dokumen PDF: pindaian kitab turats, manuskrip, dokumen A4/B5, buku terjemahan, dan berkas digital lainnya.
-            </span>
+          {/* Format Compatibility Note & Quick Sample Test */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-[#F3EFE6] border border-[#E5DEC9] text-xs text-[#57534E]">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-[#14532D] shrink-0" />
+              <span>Mendukung PDF scan kitab turats & dokumen digital (Maks. 200MB).</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleInstantSamplePdf}
+              className="text-xs font-bold text-[#78350F] hover:underline whitespace-nowrap"
+            >
+              Uji Coba dengan PDF Contoh →
+            </button>
           </div>
 
           {/* Metadata Form */}
@@ -358,7 +375,7 @@ export const PdfUploadModal: React.FC<PdfUploadModalProps> = ({
             }`}
           >
             <BookOpen className="w-4 h-4" />
-            {isConverting ? 'Mengonversi PDF...' : 'Buka di PocketBook Tang Kitab'}
+            {isConverting ? 'Mengunggah & Menyusun Kitab...' : 'Unggah & Buka Kitab Sekarang'}
           </button>
         </div>
       </div>

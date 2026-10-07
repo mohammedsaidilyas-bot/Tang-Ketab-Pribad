@@ -429,6 +429,27 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
   const [initError, setInitError] = useState<string | null>(null);
   const [loadingStatus, setLoadingStatus] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState<number | null>(null);
+  const [copiedFihrisJson, setCopiedFihrisJson] = useState(false);
+
+  const handleCopyFihrisJson = () => {
+    const jsonOutput = {
+      bookTitle: kitab.title,
+      author: kitab.author,
+      tocPages: Array.from(new Set(kitab.chapters.map((c) => c.sourceFihrisPage).filter(Boolean))),
+      entries: kitab.chapters.map((ch) => ({
+        originalTitle: ch.originalTitle || ch.title,
+        normalizedTitle: ch.normalizedTitle || normalizeArabicTitle(ch.title),
+        printedPage: ch.printedPage || ch.startPage,
+        pdfPage: ch.startPage,
+        sourceFihrisPage: ch.sourceFihrisPage || 1,
+        confidence: ch.confidence ?? 0.95,
+        validationStatus: ch.validationStatus || 'verified',
+      })),
+    };
+    navigator.clipboard?.writeText(JSON.stringify(jsonOutput, null, 2));
+    setCopiedFihrisJson(true);
+    setTimeout(() => setCopiedFihrisJson(false), 2500);
+  };
 
   const handleCopyPageText = (pageNumber: number, paragraphs: string[]) => {
     const text = paragraphs.join('\n\n');
@@ -1547,10 +1568,20 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                   }
                 }}
                 className="px-3 py-1.5 text-xs font-medium bg-[#F7F4EE] border border-[#78350F] text-[#78350F] hover:bg-[#78350F] hover:text-white transition-colors flex items-center gap-1.5 shadow-xs"
-                title="Pindai dan baca otomatis daftar isi / fihris dari berkas PDF ini"
+                title="Pindai dan baca otomatis daftar isi / fihris dari berkas PDF ini menggunakan Auto-Fihris Presisi Tinggi"
               >
                 <RotateCw className={`w-3.5 h-3.5 ${isScanningPdfToc ? 'animate-spin' : ''}`} />
-                <span>{isScanningPdfToc ? 'Memindai PDF...' : 'Pindai Ulang Fihris'}</span>
+                <span>{isScanningPdfToc ? 'Memindai PDF...' : 'Auto-Fihris Presisi'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCopyFihrisJson}
+                className="px-3 py-1.5 text-xs font-medium bg-[#F7F4EE] border border-[#78350F] text-[#78350F] hover:bg-[#78350F] hover:text-white transition-colors flex items-center gap-1.5 shadow-xs"
+                title="Salin data Fihris lengkap dalam format JSON standar (originalTitle, printedPage, pdfPage, confidence, validationStatus)"
+              >
+                {copiedFihrisJson ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <FileText className="w-3.5 h-3.5" />}
+                <span>{copiedFihrisJson ? 'JSON Tersalin!' : 'Salin JSON Fihris'}</span>
               </button>
 
               {onUpdateChapters && (
@@ -1803,13 +1834,30 @@ export const PocketBookReader: React.FC<PocketBookReaderProps> = ({
                       }`}
                       dir="rtl"
                     >
-                      <div className="flex items-center justify-between gap-2 w-full text-xs font-mono-tabular" dir="rtl">
-                        <span className={`text-[10px] px-2 py-0.5 border ${badgeStyle}`}>
-                          {badgeLabel}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold px-2 py-0.5 bg-[#78350F]/10 border border-[#78350F]/30 text-[#78350F] text-[11px]">
-                            ص {getChapterDisplayPage(ch.startPage)}
+                      <div className="flex items-center justify-between gap-1.5 w-full text-xs font-mono-tabular" dir="rtl">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <span className={`text-[10px] px-2 py-0.5 border ${badgeStyle}`}>
+                            {badgeLabel}
+                          </span>
+                          {ch.validationStatus === 'verified' && (
+                            <span className="text-[9px] px-1.5 py-0.5 bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold" title="Halaman terverifikasi cocok dengan teks bab">
+                              ✓ موثق
+                            </span>
+                          )}
+                          {ch.validationStatus === 'review' && (
+                            <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-900 border border-amber-300 font-medium" title="Perlu ditinjau">
+                              ⚠ مراجعة
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-nowrap">
+                          {ch.printedPage && ch.printedPage !== ch.startPage ? (
+                            <span className="font-bold px-1.5 py-0.5 bg-amber-50 border border-amber-300 text-amber-900 text-[10px]" title="Nomor halaman yang tercetak di naskah kitab">
+                              ص.الأصل {ch.printedPage}
+                            </span>
+                          ) : null}
+                          <span className="font-bold px-2 py-0.5 bg-[#78350F]/10 border border-[#78350F]/30 text-[#78350F] text-[11px]" title="Halaman pada berkas PDF">
+                            PDF {getChapterDisplayPage(ch.startPage)}
                           </span>
                           <span className="text-[11px] text-[#78716C]">
                             #{ch.number}

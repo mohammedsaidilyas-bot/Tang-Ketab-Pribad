@@ -6,6 +6,20 @@ export type RenderMode = 'pocketbook' | 'pdf_canvas';
 
 export type NoteCategory = 'syarah' | 'makna' | 'dalil' | 'muzakarah';
 
+export type FihrisValidationStatus = 'verified' | 'review' | 'unverified';
+
+export type HeadingLevel = 
+  | 'kitab' 
+  | 'bab' 
+  | 'fasl' 
+  | 'far' 
+  | 'tanbih' 
+  | 'faidah' 
+  | 'khatimah' 
+  | 'muqaddimah' 
+  | 'masalah' 
+  | 'other';
+
 export interface KitabPage {
   pageNumber: number;
   chapterTitle: string;
@@ -14,11 +28,41 @@ export interface KitabPage {
   footnote?: string;
 }
 
+export interface FihrisEntry {
+  id: string;
+  originalTitle: string;
+  normalizedTitle: string;
+  printedPage: number;
+  pdfPage: number;
+  sourceFihrisPage: number;
+  confidence: number;
+  validationStatus: FihrisValidationStatus;
+  level?: HeadingLevel;
+  matchedTextInTarget?: string;
+  matchWindowPages?: number[];
+  notes?: string;
+}
+
+export interface FihrisMetadata {
+  bookTitle: string;
+  author?: string;
+  tocPages: number[];
+  estimatedOffset?: number;
+  entries: FihrisEntry[];
+}
+
 export interface KitabChapter {
   id: string;
   number: string;
   title: string;
-  startPage: number;
+  startPage: number; // PDF page index (1-based)
+  printedPage?: number; // Physical page printed on book
+  originalTitle?: string; // Exact verbatim source OCR title
+  normalizedTitle?: string; // Search/matching title
+  sourceFihrisPage?: number; // Page in PDF where fihris entry resides
+  confidence?: number; // 0.0 - 1.0 confidence score
+  validationStatus?: FihrisValidationStatus;
+  level?: HeadingLevel;
 }
 
 export interface HasyiyahNote {
